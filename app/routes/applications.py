@@ -8,9 +8,92 @@ import anthropic
 from app.db import get_db
 from app.models.db_models import Profile, Listing, Application
 from app.services.auto_apply import draft_application, decide_auto_send, compute_sendable_at
+from app.services.matching import score_listing
  
 router = APIRouter(prefix="/applications", tags=["applications"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+ 
+ 
+class AcceptIn(BaseModel):
+    user_id: str
+    listing_id: str
+ 
+ 
+@router.post("/accept")
+def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
+    """The one-click 'I accept this match' action: computes the real
+    match score for this listing against the user's current profile,
+    drafts a tailored application email via Claude, and automatically
+    decides whether it's confident enough to queue for auto-send or
+    needs human review first -- no confidence number needs to be
+    passed in manually, unlike /applications/draft.
+    """
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    # Already have an application for this listing? Don't draft a duplicate.
+    existing = (
+        db.query(Application)
+        .filter(Application.user_id == payload.user_id, Application.listing_id == payload.listing_id)
+        .first()
+    )
+    if existing:
+        return {
+            "application_id": str(existing.id),
+            "status": existing.status,
+            "draft": existing.draft_content,
+            "note": "An application for this match already exists - returning it instead of drafting a duplicate.",
+        }
+ 
+    profile_dict = {
+        "northstar": profile.northstar,
+        "final_idea": profile.final_idea or "",
+        "skills": profile.skills or "",
+        "dealbreakers": profile.dealbreakers or "",
+        "priorities": profile.priorities or [],
+    }
+    listing_dict = {
+        "type": listing.type,
+        "tags": listing.tags or [],
+        "title": listing.title,
+        "org": listing.org,
+    }
+ 
+    match = score_listing(listing_dict, profile_dict)
+    if match is None:
+        raise HTTPException(status_code=400, detail="This listing conflicts with one of your stated deal-breakers - not drafting an application for it.")
+ 
+    draft_text = draft_application(client, listing_dict, profile_dict)
+    status = decide_auto_send(match["score_pct"])
+ 
+    app_record = Application(
+        user_id=payload.user_id,
+        listing_id=payload.listing_id,
+        draft_content=draft_text,
+        confidence_pct=match["score_pct"],
+        status=status,
+        sendable_at=compute_sendable_at() if status == "approved" else None,
+    )
+    db.add(app_record)
+    db.commit()
+    db.refresh(app_record)
+ 
+    return {
+        "application_id": str(app_record.id),
+        "match_score": match["score_pct"],
+        "status": status,
+        "draft": draft_text,
+        "note": "approved = eligible to auto-send after the undo window; pending_review = needs your explicit approval first",
+    }
  
  
 class DraftIn(BaseModel):
