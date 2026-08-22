@@ -90,6 +90,8 @@ class RoadmapMilestone(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     title = Column(String, nullable=False)
     description = Column(Text)
+    success_criteria = Column(Text)
+    estimated_timeframe = Column(String)
     target_stage = Column(Integer, nullable=False)
     status = Column(String, default="planned")
     created_at = Column(DateTime, default=datetime.utcnow)
