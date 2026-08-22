@@ -1,148 +1,80 @@
-import os
-import re
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
-import anthropic
- 
-from app.db import get_db
-from app.models.db_models import Profile, Listing, RoadmapMilestone
-from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
-from app.services.matching import rank_listings
- 
-router = APIRouter(prefix="/roadmap", tags=["roadmap"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+"""Generates a real career roadmap from a user's profile using Claude,
+and explains how a specific listing fits into that roadmap. Each
+milestone now includes success criteria (how you know it's actually
+done) and an estimated timeframe, not just a vague title -- this is
+what turns it from a generic template into an actual plan.
+"""
+import json
  
  
-def _profile_to_dict(p: Profile) -> dict:
-    return {
-        "northstar": p.northstar,
-        "final_idea": p.final_idea or "",
-        "skills": p.skills or "",
-        "timeframe": p.timeframe or "",
-        "stage": p.stage or "",
-        "priorities": p.priorities or [],
-        "dealbreakers": p.dealbreakers or "",
-        "target_types": p.target_types or [],
-    }
- 
- 
-def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
-    """Finds tags that show up often in this user's top real matches
-    but aren't in their stated skills or goal - the same logic the
-    frontend chart uses, now grounding the roadmap in real data
-    instead of generic advice.
+def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | None = None) -> list[dict]:
+    """Produces 4-6 ordered milestones from where the person is now to
+    their stated goal. Returns a list of dicts with 'title',
+    'description', 'success_criteria', 'estimated_timeframe', and
+    'stage' (1, 2, 3...) keys.
     """
-    listings = db.query(Listing).all()
-    if not listings:
-        return []
-    listing_dicts = [
-        {"id": str(l.id), "type": l.type, "title": l.title, "org": l.org, "tags": l.tags or []}
-        for l in listings
-    ]
-    ranked = rank_listings(listing_dicts, profile_dict, top_n=8)
+    gap_line = (
+        f"Skills that show up often in listings that match their goal, but aren't in their stated skills yet: {', '.join(skill_gaps)}.\n"
+        if skill_gaps else ""
+    )
+    prompt = (
+        f"A person's long-term career goal: \"{profile['northstar']}\"\n"
+        f"What 'made it' looks like to them, concretely: \"{profile.get('final_idea', '')}\"\n"
+        f"Their timeframe: {profile.get('timeframe', 'unspecified')}\n"
+        f"Current stage: {profile.get('stage', 'unspecified')}\n"
+        f"Current skills: \"{profile.get('skills', '')}\"\n"
+        f"What matters most to them: {', '.join(profile.get('priorities', []))}\n"
+        f"{gap_line}\n"
+        "Generate 4-6 ordered milestones forming a REAL, actionable roadmap "
+        "from where they are now to that goal -- not generic career advice. "
+        "Each milestone must be specific enough that the person could start "
+        "on it today. For each milestone, include:\n"
+        "- title: a concrete action, not an abstract phase (e.g. 'Ship a "
+        "SQL-based analytics project on a real dataset', not 'Build skills')\n"
+        "- description: 1-2 sentences on exactly what to do and why it "
+        "matters for their specific goal\n"
+        "- success_criteria: how they will concretely know this milestone "
+        "is actually complete (a specific, checkable outcome, not a vague "
+        "feeling of readiness)\n"
+        "- estimated_timeframe: a realistic duration for this one step "
+        "(e.g. '2-3 weeks', '1-2 months')\n"
+        "- stage: the order number, starting at 1\n\n"
+        "If skill gaps were listed above, at least one milestone should "
+        "directly address closing one of them. Return ONLY valid JSON, an "
+        "array of objects with exactly those five keys, nothing else, no "
+        "markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
  
-    skill_tokens = re.findall(r"[a-z][a-z\-]{2,}", profile_dict.get("skills", "").lower())
-    goal_tokens = re.findall(r"[a-z][a-z\-]{2,}", (profile_dict["northstar"] + " " + profile_dict.get("final_idea", "")).lower())
  
-    freq = {}
-    for listing in ranked:
-        for tag in listing.get("tags", []):
-            known = any(t in tag or tag in t for t in skill_tokens) or any(t in tag or tag in t for t in goal_tokens)
-            if not known:
-                freq[tag] = freq.get(tag, 0) + 1
-    return [tag for tag, _ in sorted(freq.items(), key=lambda kv: -kv[1])[:4]]
- 
- 
-@router.post("/{user_id}")
-def create_roadmap(user_id: str, db: Session = Depends(get_db)):
-    """Generates a fresh, grounded roadmap for this user and stores it,
-    replacing any previous one. Each milestone now includes concrete
-    success criteria and a realistic timeframe, and is informed by
-    real skill gaps pulled from this user's actual current matches.
+def explain_listing_against_roadmap(anthropic_client, listing: dict, roadmap: list[dict], profile: dict) -> str:
+    """Given a listing and the user's roadmap, explains in plain language
+    which milestone(s) this listing advances, and why -- the actual
+    'compares to your roadmap' feature.
     """
-    profile = (
-        db.query(Profile)
-        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
-        .first()
+    roadmap_text = "\n".join(
+        f"{m['stage']}. {m['title']}: {m['description']} (done when: {m.get('success_criteria', 'n/a')})"
+        for m in roadmap
     )
-    if not profile:
-        raise HTTPException(status_code=404, detail="No current profile for this user")
- 
-    profile_dict = _profile_to_dict(profile)
-    skill_gaps = _compute_skill_gaps(db, profile_dict)
-    milestones = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
- 
-    db.query(RoadmapMilestone).filter(RoadmapMilestone.user_id == user_id).delete()
-    for m in milestones:
-        db.add(RoadmapMilestone(
-            user_id=user_id,
-            title=m["title"],
-            description=m["description"],
-            success_criteria=m.get("success_criteria", ""),
-            estimated_timeframe=m.get("estimated_timeframe", ""),
-            target_stage=m["stage"],
-        ))
-    db.commit()
-    return {"status": "created", "milestones": milestones, "skill_gaps_used": skill_gaps}
- 
- 
-@router.get("/{user_id}")
-def get_roadmap(user_id: str, db: Session = Depends(get_db)):
-    milestones = (
-        db.query(RoadmapMilestone)
-        .filter(RoadmapMilestone.user_id == user_id)
-        .order_by(RoadmapMilestone.target_stage)
-        .all()
+    prompt = (
+        f"User's roadmap toward their goal (\"{profile['northstar']}\"):\n{roadmap_text}\n\n"
+        f"A listing they're considering: \"{listing['title']}\" at {listing['org']} "
+        f"({listing['type']}), tags: {', '.join(listing.get('tags', []))}.\n\n"
+        "In 1-2 sentences, explain which roadmap stage this listing advances "
+        "and why, or state plainly if it doesn't fit the roadmap well. Be "
+        "direct and concrete, no filler."
     )
-    if not milestones:
-        return {"milestones": [], "note": "No roadmap yet - POST to this URL to generate one."}
-    return {
-        "milestones": [
-            {
-                "title": m.title,
-                "description": m.description,
-                "success_criteria": m.success_criteria,
-                "estimated_timeframe": m.estimated_timeframe,
-                "stage": m.target_stage,
-                "status": m.status,
-            }
-            for m in milestones
-        ]
-    }
- 
- 
-@router.get("/{user_id}/explain/{listing_id}")
-def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
-    """Returns Claude's explanation of how one specific listing fits
-    the user's stored roadmap.
-    """
-    profile = (
-        db.query(Profile)
-        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
-        .first()
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}],
     )
-    if not profile:
-        raise HTTPException(status_code=404, detail="No current profile for this user")
- 
-    milestones = (
-        db.query(RoadmapMilestone)
-        .filter(RoadmapMilestone.user_id == user_id)
-        .order_by(RoadmapMilestone.target_stage)
-        .all()
-    )
-    if not milestones:
-        raise HTTPException(status_code=404, detail="No roadmap yet - generate one first with POST /roadmap/{user_id}")
- 
-    listing = db.query(Listing).filter(Listing.id == listing_id).first()
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found")
- 
-    roadmap_dicts = [
-        {"stage": m.target_stage, "title": m.title, "description": m.description, "success_criteria": m.success_criteria}
-        for m in milestones
-    ]
-    listing_dict = {"title": listing.title, "org": listing.org, "type": listing.type, "tags": listing.tags or []}
- 
-    explanation = explain_listing_against_roadmap(client, listing_dict, roadmap_dicts, _profile_to_dict(profile))
-    return {"listing": listing.title, "explanation": explanation}
+    return "".join(b.text for b in resp.content if b.type == "text").strip()
  
