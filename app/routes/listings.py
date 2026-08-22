@@ -1,15 +1,11 @@
-import os
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-import anthropic
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
 from app.services.matching import rank_listings, get_tag_weights_from_outcomes
-from app.services.roadmap import explain_listing_against_roadmap
  
 router = APIRouter(prefix="/listings", tags=["listings"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 def _profile_to_dict(p: Profile) -> dict:
@@ -35,10 +31,37 @@ def _listing_to_dict(l: Listing) -> dict:
     }
  
  
+def _compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
+    """Fast, free, deterministic alignment between a listing and the
+    user's roadmap - tag overlap against each milestone's title and
+    description. This runs for every match, not just a handful,
+    unlike the old approach which called Claude live per-listing and
+    silently capped at 5. The deep, AI-written explanation is still
+    available on demand via GET /roadmap/{user_id}/explain/{listing_id} -
+    this heuristic is what makes every match show *some* grounded
+    roadmap context immediately, for free.
+    """
+    if not milestones:
+        return None
+    listing_tags = set(t.lower() for t in listing.get("tags", []))
+    best_stage, best_overlap = None, 0
+    for m in milestones:
+        milestone_text = (m["title"] + " " + m["description"]).lower()
+        overlap = sum(1 for tag in listing_tags if tag in milestone_text)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_stage = m
+    if not best_stage or best_overlap == 0:
+        return None
+    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
+ 
+ 
 @router.get("/matches/{user_id}")
 def get_matches(user_id: str, db: Session = Depends(get_db)):
     """Returns the current top-ranked listings for a user, scored live
-    against whatever's currently in the listings table.
+    against whatever's currently in the listings table. Every match
+    includes a roadmap_alignment field (free, instant) showing which
+    stage of the user's plan it advances, if any.
     """
     profile = (
         db.query(Profile)
@@ -71,28 +94,15 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
         tag_weights=tag_weights,
     )
  
-    # If this user has a saved roadmap, ground the top matches' "why"
-    # in it automatically - not just tag overlap, but which stage of
-    # their actual plan this listing advances. Capped to the top 5
-    # to keep the AI cost bounded; the rest still get the free
-    # rule-based rationale that's already on every match.
     milestones = (
         db.query(RoadmapMilestone)
         .filter(RoadmapMilestone.user_id == user_id)
         .order_by(RoadmapMilestone.target_stage)
         .all()
     )
-    if milestones:
-        roadmap_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
-        profile_dict = _profile_to_dict(profile)
-        for listing in ranked[:5]:
-            try:
-                listing["roadmap_explanation"] = explain_listing_against_roadmap(
-                    client, listing, roadmap_dicts, profile_dict
-                )
-            except Exception as e:
-                listing["roadmap_explanation"] = None
-                listing["roadmap_explanation_error"] = str(e)
+    milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
+    for listing in ranked:
+        listing["roadmap_alignment"] = _compute_roadmap_alignment(listing, milestone_dicts)
  
     return {"matches": ranked, "profile_id": str(profile.id), "outcomes_considered": len(outcome_dicts)}
  
