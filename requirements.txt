@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+pgvector
+pydantic
+python-dotenv
+httpx
+anthropic
+apscheduler
+email-validator
+ 
