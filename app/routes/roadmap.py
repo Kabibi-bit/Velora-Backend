@@ -1,4 +1,3 @@
-dmap · PY
 """Generates a real career roadmap from a user's profile using Claude,
 and explains how a specific listing fits into that roadmap. Each
 milestone now includes success criteria (how you know it's actually
