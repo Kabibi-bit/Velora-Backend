@@ -1,11 +1,12 @@
 import os
 import re
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import Profile, Listing, RoadmapMilestone
+from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary
 from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
 from app.services.matching import rank_listings
  
@@ -28,9 +29,8 @@ def _profile_to_dict(p: Profile) -> dict:
  
 def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
     """Finds tags that show up often in this user's top real matches
-    but aren't in their stated skills or goal - the same logic the
-    frontend chart uses, now grounding the roadmap in real data
-    instead of generic advice.
+    but aren't in their stated skills or goal - grounding the roadmap
+    in real data instead of generic advice.
     """
     listings = db.query(Listing).all()
     if not listings:
@@ -55,10 +55,10 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
  
 @router.post("/{user_id}")
 def create_roadmap(user_id: str, db: Session = Depends(get_db)):
-    """Generates a fresh, grounded roadmap for this user and stores it,
-    replacing any previous one. Each milestone now includes concrete
-    success criteria and a realistic timeframe, and is informed by
-    real skill gaps pulled from this user's actual current matches.
+    """Generates a fresh, detailed roadmap: an overall strategy summary
+    plus 4-6 milestones, each with success criteria, a timeframe, a
+    first action, a concrete resource, and the specific risk of
+    stalling on that step. Replaces any previous roadmap.
     """
     profile = (
         db.query(Profile)
@@ -70,7 +70,9 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
  
     profile_dict = _profile_to_dict(profile)
     skill_gaps = _compute_skill_gaps(db, profile_dict)
-    milestones = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
+    result = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
+    milestones = result["milestones"]
+    summary = result["summary"]
  
     db.query(RoadmapMilestone).filter(RoadmapMilestone.user_id == user_id).delete()
     for m in milestones:
@@ -81,10 +83,19 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
             success_criteria=m.get("success_criteria", ""),
             estimated_timeframe=m.get("estimated_timeframe", ""),
             first_action=m.get("first_action", ""),
+            resource=m.get("resource", ""),
+            risk=m.get("risk", ""),
             target_stage=m["stage"],
         ))
+ 
+    existing_summary = db.query(RoadmapSummary).filter(RoadmapSummary.user_id == user_id).first()
+    if existing_summary:
+        existing_summary.summary = summary
+    else:
+        db.add(RoadmapSummary(user_id=user_id, summary=summary))
+ 
     db.commit()
-    return {"status": "created", "milestones": milestones, "skill_gaps_used": skill_gaps}
+    return {"status": "created", "summary": summary, "milestones": milestones, "skill_gaps_used": skill_gaps}
  
  
 @router.get("/{user_id}")
@@ -96,21 +107,49 @@ def get_roadmap(user_id: str, db: Session = Depends(get_db)):
         .all()
     )
     if not milestones:
-        return {"milestones": [], "note": "No roadmap yet - POST to this URL to generate one."}
+        return {"milestones": [], "summary": None, "note": "No roadmap yet - POST to this URL to generate one."}
+ 
+    summary_row = db.query(RoadmapSummary).filter(RoadmapSummary.user_id == user_id).first()
     return {
+        "summary": summary_row.summary if summary_row else None,
         "milestones": [
             {
+                "id": str(m.id),
                 "title": m.title,
                 "description": m.description,
                 "success_criteria": m.success_criteria,
                 "estimated_timeframe": m.estimated_timeframe,
                 "first_action": m.first_action,
+                "resource": m.resource,
+                "risk": m.risk,
                 "stage": m.target_stage,
                 "status": m.status,
             }
             for m in milestones
         ]
     }
+ 
+ 
+class MilestoneStatusIn(BaseModel):
+    status: str
+ 
+ 
+VALID_MILESTONE_STATUSES = {"planned", "in_progress", "done"}
+ 
+ 
+@router.post("/milestone/{milestone_id}/status")
+def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+    """Marks real progress on one milestone - this is what makes the
+    roadmap a living plan instead of a one-time AI output.
+    """
+    if payload.status not in VALID_MILESTONE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {VALID_MILESTONE_STATUSES}")
+    milestone = db.query(RoadmapMilestone).filter(RoadmapMilestone.id == milestone_id).first()
+    if not milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    milestone.status = payload.status
+    db.commit()
+    return {"status": "updated", "milestone_status": payload.status}
  
  
 @router.get("/{user_id}/explain/{listing_id}")
