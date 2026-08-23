@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import Profile, Listing, Application
-from app.services.auto_apply import draft_application, decide_auto_send, compute_sendable_at
-from app.services.matching import score_listing
+from app.models.db_models import Application
+from app.services.auto_apply import (
+    draft_application,
+    decide_auto_send,
+    compute_sendable_at,
+    create_application_for_match,
+)
  
 router = APIRouter(prefix="/applications", tags=["applications"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -21,79 +25,26 @@ class AcceptIn(BaseModel):
  
 @router.post("/accept")
 def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
-    """The one-click 'I accept this match' action: computes the real
-    match score for this listing against the user's current profile,
-    drafts a tailored application email via Claude, and automatically
-    decides whether it's confident enough to queue for auto-send or
-    needs human review first -- no confidence number needs to be
-    passed in manually, unlike /applications/draft.
+    """The one-click 'I accept this match' action - this is also what
+    fires automatically when a user stars a listing (see /saved in
+    saved_listings.py). Computes the real match score, drafts a
+    tailored application via Claude, and decides whether it's
+    confident enough to queue for auto-send or needs human review.
     """
-    profile = (
-        db.query(Profile)
-        .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
-        .first()
-    )
-    if not profile:
+    result = create_application_for_match(db, client, payload.user_id, payload.listing_id)
+ 
+    if result.get("error") == "no_profile":
         raise HTTPException(status_code=404, detail="No current profile for this user")
- 
-    listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
-    if not listing:
+    if result.get("error") == "listing_not_found":
         raise HTTPException(status_code=404, detail="Listing not found")
- 
-    # Already have an application for this listing? Don't draft a duplicate.
-    existing = (
-        db.query(Application)
-        .filter(Application.user_id == payload.user_id, Application.listing_id == payload.listing_id)
-        .first()
-    )
-    if existing:
-        return {
-            "application_id": str(existing.id),
-            "status": existing.status,
-            "draft": existing.draft_content,
-            "note": "An application for this match already exists - returning it instead of drafting a duplicate.",
-        }
- 
-    profile_dict = {
-        "northstar": profile.northstar,
-        "final_idea": profile.final_idea or "",
-        "skills": profile.skills or "",
-        "dealbreakers": profile.dealbreakers or "",
-        "priorities": profile.priorities or [],
-    }
-    listing_dict = {
-        "type": listing.type,
-        "tags": listing.tags or [],
-        "title": listing.title,
-        "org": listing.org,
-    }
- 
-    match = score_listing(listing_dict, profile_dict)
-    if match is None:
+    if result.get("error") == "dealbreaker_conflict":
         raise HTTPException(status_code=400, detail="This listing conflicts with one of your stated deal-breakers - not drafting an application for it.")
  
-    draft_text = draft_application(client, listing_dict, profile_dict)
-    status = decide_auto_send(match["score_pct"])
- 
-    app_record = Application(
-        user_id=payload.user_id,
-        listing_id=payload.listing_id,
-        draft_content=draft_text,
-        confidence_pct=match["score_pct"],
-        status=status,
-        sendable_at=compute_sendable_at() if status == "approved" else None,
-    )
-    db.add(app_record)
-    db.commit()
-    db.refresh(app_record)
- 
-    return {
-        "application_id": str(app_record.id),
-        "match_score": match["score_pct"],
-        "status": status,
-        "draft": draft_text,
-        "note": "approved = eligible to auto-send after the undo window; pending_review = needs your explicit approval first",
-    }
+    if result.get("already_existed"):
+        result["note"] = "An application for this match already exists - returning it instead of drafting a duplicate."
+    else:
+        result["note"] = "approved = eligible to auto-send after the undo window; pending_review = needs your explicit approval first"
+    return result
  
  
 class DraftIn(BaseModel):
@@ -106,7 +57,10 @@ class DraftIn(BaseModel):
 def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
     """Drafts an application and decides auto-send vs review, based on
     the confidence score you pass in (use the score from /listings/matches).
+    Kept for manual/testing use - /accept is the real one-click path.
     """
+    from app.models.db_models import Profile, Listing
+ 
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
@@ -146,17 +100,32 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}")
 def list_applications(user_id: str, db: Session = Depends(get_db)):
-    rows = db.query(Application).filter(Application.user_id == user_id).all()
+    """Lists all drafted applications for a user - this is what backs
+    the frontend's Workshop page.
+    """
+    from app.models.db_models import Listing
+ 
+    rows = (
+        db.query(Application, Listing)
+        .join(Listing, Application.listing_id == Listing.id)
+        .filter(Application.user_id == user_id)
+        .order_by(Application.created_at.desc())
+        .all()
+    )
     return [
         {
             "id": str(a.id),
             "listing_id": str(a.listing_id),
+            "listing_title": l.title,
+            "listing_org": l.org,
             "status": a.status,
             "confidence_pct": float(a.confidence_pct) if a.confidence_pct else None,
+            "draft": a.draft_content,
             "sendable_at": a.sendable_at.isoformat() if a.sendable_at else None,
             "sent_at": a.sent_at.isoformat() if a.sent_at else None,
+            "created_at": a.created_at.isoformat(),
         }
-        for a in rows
+        for a, l in rows
     ]
  
  
