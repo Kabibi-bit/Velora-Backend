@@ -1,17 +1,20 @@
 """Generates a real career roadmap from a user's profile using Claude,
 and explains how a specific listing fits into that roadmap. Each
-milestone includes success criteria, a timeframe, and a literal first
-action to take today -- this is what turns it from generic career
-advice into an actual plan someone can start on immediately.
+milestone includes success criteria, a timeframe, a first action, a
+concrete resource to use, and the most common way this specific step
+goes wrong -- this is what turns it into a real plan instead of a
+motivational list.
 """
 import json
  
  
-def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | None = None) -> list[dict]:
-    """Produces 4-6 ordered milestones from where the person is now to
-    their stated goal. Returns a list of dicts with 'title',
-    'description', 'success_criteria', 'estimated_timeframe',
-    'first_action', and 'stage' (1, 2, 3...) keys.
+def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | None = None) -> dict:
+    """Produces an overall summary plus 4-6 ordered milestones from
+    where the person is now to their stated goal. Returns a dict with
+    'summary' (why this order, what the overall strategy is) and
+    'milestones' (a list of dicts with title, description,
+    success_criteria, estimated_timeframe, first_action, resource,
+    risk, and stage).
     """
     gap_line = (
         f"Skills that show up often in listings that match their goal, but aren't in their stated skills yet: {', '.join(skill_gaps)}.\n"
@@ -25,39 +28,51 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
         f"Current skills: \"{profile.get('skills', '')}\"\n"
         f"What matters most to them: {', '.join(profile.get('priorities', []))}\n"
         f"{gap_line}\n"
-        "Generate 4-6 ordered milestones forming a REAL, actionable roadmap "
-        "from where they are now to that goal.\n\n"
+        "Generate a REAL, actionable roadmap from where they are now to "
+        "that goal.\n\n"
         "BANNED as too vague, do not use language like this anywhere: "
         "'build skills', 'gain experience', 'network more', 'improve your "
         "profile', 'stay consistent', 'work hard', or any milestone that "
         "doesn't name a specific artifact, action, or outcome. If a "
         "milestone could apply to literally any career goal, rewrite it "
         "until it could only apply to THIS person's specific goal.\n\n"
-        "For each milestone, include exactly these five keys:\n"
+        "Return a JSON object with exactly two top-level keys:\n\n"
+        "1. \"summary\": 2-3 sentences explaining the overall strategy - "
+        "why these stages happen in this specific order, and what the "
+        "single biggest risk to the whole plan is.\n\n"
+        "2. \"milestones\": an array of 4-6 objects, each with exactly "
+        "these seven keys:\n"
         "- title: a concrete action naming a real artifact or outcome "
         "(e.g. 'Ship a SQL-based analytics project using a real public "
         "dataset', not 'Build skills')\n"
         "- description: 1-2 sentences on exactly what to do and why it "
         "matters for THIS person's specific goal - reference their actual "
-        "stated goal or skills by name, don't write something generic "
-        "that could apply to anyone\n"
+        "stated goal or skills by name\n"
         "- success_criteria: a specific, checkable outcome someone else "
-        "could verify - not a feeling of readiness (e.g. 'you have a "
-        "live link you'd send a stranger', not 'you feel confident')\n"
+        "could verify - not a feeling of readiness\n"
         "- estimated_timeframe: a realistic duration for this one step "
         "(e.g. '2-3 weeks', '1-2 months')\n"
         "- first_action: the literal, physical first thing to do TODAY "
-        "to start this milestone - specific enough that someone could "
-        "do it in the next hour, not 'start researching'\n"
+        "to start this milestone - doable in the next hour\n"
+        "- resource: ONE concrete, real category of resource to use for "
+        "this step - name a real, generally-known platform, community, "
+        "or resource type (e.g. 'a public dataset on Kaggle in your "
+        "target domain', 'your school's alumni directory filtered by "
+        "current employer', 'a free-tier project on GitHub'). Never "
+        "invent a specific company name, person, or URL that may not "
+        "be real.\n"
+        "- risk: the single most common way people fail or stall on "
+        "THIS specific milestone, and one sentence on how to avoid it - "
+        "grounded, not generic ('running out of time' is not a risk, "
+        "'picking a project too broad to finish in 3 weeks' is)\n"
         "- stage: the order number, starting at 1\n\n"
         "If skill gaps were listed above, at least one milestone must "
         "directly address closing one of them by name. Return ONLY valid "
-        "JSON, an array of objects with exactly those six keys, nothing "
-        "else, no markdown fences, no commentary."
+        "JSON, nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1500,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
