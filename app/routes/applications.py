@@ -123,6 +123,7 @@ def list_applications(user_id: str, db: Session = Depends(get_db)):
             "draft": a.draft_content,
             "sendable_at": a.sendable_at.isoformat() if a.sendable_at else None,
             "sent_at": a.sent_at.isoformat() if a.sent_at else None,
+            "auto_generated": a.auto_generated,
             "created_at": a.created_at.isoformat(),
         }
         for a, l in rows
