@@ -30,6 +30,7 @@ def _profile_to_dict(p: Profile) -> dict:
         "dealbreakers": p.dealbreakers or "",
         "priorities": p.priorities or [],
         "target_types": p.target_types or [],
+        "location_pref": p.location_pref or "",
     }
  
  
