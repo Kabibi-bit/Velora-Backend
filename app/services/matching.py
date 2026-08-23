@@ -98,3 +98,25 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
     return scored[:top_n]
  
+ 
+def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
+    """Fast, free, deterministic alignment between a listing and the
+    user's roadmap - tag overlap against each milestone's title and
+    description. Shared by /listings/matches (shown on every card)
+    and the auto-apply confidence calculation (a listing that clearly
+    advances the roadmap is a stronger auto-send candidate than one
+    that merely scores well on keywords).
+    """
+    if not milestones:
+        return None
+    listing_tags = set(t.lower() for t in listing.get("tags", []))
+    best_stage, best_overlap = None, 0
+    for m in milestones:
+        milestone_text = (m["title"] + " " + m["description"]).lower()
+        overlap = sum(1 for tag in listing_tags if tag in milestone_text)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_stage = m
+    if not best_stage or best_overlap == 0:
+        return None
+    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
