@@ -80,6 +80,7 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
             description=m["description"],
             success_criteria=m.get("success_criteria", ""),
             estimated_timeframe=m.get("estimated_timeframe", ""),
+            first_action=m.get("first_action", ""),
             target_stage=m["stage"],
         ))
     db.commit()
@@ -103,6 +104,7 @@ def get_roadmap(user_id: str, db: Session = Depends(get_db)):
                 "description": m.description,
                 "success_criteria": m.success_criteria,
                 "estimated_timeframe": m.estimated_timeframe,
+                "first_action": m.first_action,
                 "stage": m.target_stage,
                 "status": m.status,
             }
