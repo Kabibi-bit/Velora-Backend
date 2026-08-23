@@ -168,8 +168,13 @@ def run_scan_for_user(db: Session, user_id: str) -> dict:
  
 def run_scan_for_all_users():
     """The actual daily job: pulls fresh listings once, then re-scores
-    every user against the updated listings table.
+    every user against the updated listings table. Also runs Auto
+    Apply for any user who's enabled it - this is what makes the
+    autonomous mode actually autonomous, not just a bigger manual
+    button: it fires even if nobody opens the app that day.
     """
+    from app.services.auto_apply import create_application_for_match
+ 
     db = SessionLocal()
     try:
         print(f"[{datetime.utcnow().isoformat()}] Starting daily scan...")
@@ -180,6 +185,21 @@ def run_scan_for_all_users():
         for user in users:
             result = run_scan_for_user(db, str(user.id))
             print(f"  {user.email}: {result}")
+ 
+            profile = (
+                db.query(Profile)
+                .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
+                .first()
+            )
+            if profile and profile.auto_apply_enabled:
+                listings = db.query(Listing).all()
+                ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
+                auto_count = 0
+                for listing in ranked:
+                    outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
+                    if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
+                        auto_count += 1
+                print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
         print("Daily scan complete.")
     except Exception as e:
         print(f"Scan failed: {e}")
@@ -192,3 +212,4 @@ def start_scheduler():
     scheduler.add_job(run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES)
     scheduler.start()
     return scheduler
+ 
