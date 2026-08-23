@@ -92,6 +92,7 @@ class RoadmapMilestone(Base):
     description = Column(Text)
     success_criteria = Column(Text)
     estimated_timeframe = Column(String)
+    first_action = Column(Text)
     target_stage = Column(Integer, nullable=False)
     status = Column(String, default="planned")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -188,4 +189,3 @@ class Notification(Base):
     detail = Column(Text)
     is_read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
- 
