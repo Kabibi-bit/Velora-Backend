@@ -53,18 +53,60 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
  
  
 def explain_score(listing: dict, match: dict, profile: dict) -> str:
-    goal_phrase = (profile["northstar"].split(".")[0] or "your goal").lower()
+    """Builds a real, multi-clause explanation from every signal
+    already available - not just goal/skill tag overlap. Still free
+    and instant (no AI call), but covers priorities, location fit,
+    and deadline urgency, so it reads like an actual case for the
+    listing rather than a one-line template.
+    """
+    goal_phrase = (profile["northstar"].split(".")[0] or "your goal").strip().lower()
+    clauses = []
+ 
     if match["goal_match_tags"]:
-        return (
-            f"Lines up with {goal_phrase} - overlaps on "
-            f"{', '.join(match['goal_match_tags'][:2])}."
-        )
+        clauses.append(f"directly touches {', '.join(match['goal_match_tags'][:2])} from your stated goal of {goal_phrase}")
     if match["skill_match_tags"]:
-        return (
-            f"Skills match on {', '.join(match['skill_match_tags'][:2])} - "
-            f"a reasonable stepping stone."
-        )
-    return "Looser fit - worth a glance while broadening this cycle's search."
+        clauses.append(f"draws on your existing experience with {', '.join(match['skill_match_tags'][:2])}")
+ 
+    priorities = profile.get("priorities", [])
+    if "pay" in priorities and listing["type"] == "job":
+        clauses.append("is a full-time role, aligned with pay being a top priority for you")
+    if "learning" in priorities and listing["type"] in ("internship", "college"):
+        clauses.append("is structured around hands-on learning, which you said matters most right now")
+    listing_loc = (listing.get("location") or "").lower()
+    if "flexibility" in priorities and "remote" in listing_loc:
+        clauses.append("is remote, matching your stated need for flexibility")
+ 
+    location_pref = (profile.get("location_pref") or "").lower()
+    if location_pref and listing_loc:
+        if "remote" in location_pref and "remote" in listing_loc:
+            clauses.append("matches your remote location preference")
+        else:
+            pref_tokens = [t for t in tokenize(location_pref) if len(t) > 3]
+            if any(t in listing_loc for t in pref_tokens):
+                clauses.append(f"is based in {listing['location']}, inside your stated location preference")
+ 
+    deadline_note = ""
+    if listing.get("deadline"):
+        try:
+            from datetime import date
+            deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
+            days_left = (deadline_date - date.today()).days
+            if 0 <= days_left <= 14:
+                deadline_note = f" It also closes in {days_left} day{'s' if days_left != 1 else ''}, so it's worth acting on soon if you're interested."
+        except (ValueError, TypeError):
+            pass
+ 
+    if not clauses:
+        return "Looser fit - no strong overlap with your stated goal, skills, or priorities yet, but worth a glance while broadening this cycle's search." + deadline_note
+ 
+    if len(clauses) == 1:
+        joined = clauses[0]
+    elif len(clauses) == 2:
+        joined = f"{clauses[0]}, and {clauses[1]}"
+    else:
+        joined = ", ".join(clauses[:-1]) + f", and {clauses[-1]}"
+ 
+    return f"This {joined}.{deadline_note}"
  
  
 def get_tag_weights_from_outcomes(db_outcomes: list[dict]) -> dict:
@@ -120,3 +162,4 @@ def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
     if not best_stage or best_overlap == 0:
         return None
     return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
+ 
