@@ -1,8 +1,8 @@
 """Generates a real career roadmap from a user's profile using Claude,
 and explains how a specific listing fits into that roadmap. Each
-milestone now includes success criteria (how you know it's actually
-done) and an estimated timeframe, not just a vague title -- this is
-what turns it from a generic template into an actual plan.
+milestone includes success criteria, a timeframe, and a literal first
+action to take today -- this is what turns it from generic career
+advice into an actual plan someone can start on immediately.
 """
 import json
  
@@ -10,8 +10,8 @@ import json
 def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | None = None) -> list[dict]:
     """Produces 4-6 ordered milestones from where the person is now to
     their stated goal. Returns a list of dicts with 'title',
-    'description', 'success_criteria', 'estimated_timeframe', and
-    'stage' (1, 2, 3...) keys.
+    'description', 'success_criteria', 'estimated_timeframe',
+    'first_action', and 'stage' (1, 2, 3...) keys.
     """
     gap_line = (
         f"Skills that show up often in listings that match their goal, but aren't in their stated skills yet: {', '.join(skill_gaps)}.\n"
@@ -26,27 +26,38 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
         f"What matters most to them: {', '.join(profile.get('priorities', []))}\n"
         f"{gap_line}\n"
         "Generate 4-6 ordered milestones forming a REAL, actionable roadmap "
-        "from where they are now to that goal -- not generic career advice. "
-        "Each milestone must be specific enough that the person could start "
-        "on it today. For each milestone, include:\n"
-        "- title: a concrete action, not an abstract phase (e.g. 'Ship a "
-        "SQL-based analytics project on a real dataset', not 'Build skills')\n"
+        "from where they are now to that goal.\n\n"
+        "BANNED as too vague, do not use language like this anywhere: "
+        "'build skills', 'gain experience', 'network more', 'improve your "
+        "profile', 'stay consistent', 'work hard', or any milestone that "
+        "doesn't name a specific artifact, action, or outcome. If a "
+        "milestone could apply to literally any career goal, rewrite it "
+        "until it could only apply to THIS person's specific goal.\n\n"
+        "For each milestone, include exactly these five keys:\n"
+        "- title: a concrete action naming a real artifact or outcome "
+        "(e.g. 'Ship a SQL-based analytics project using a real public "
+        "dataset', not 'Build skills')\n"
         "- description: 1-2 sentences on exactly what to do and why it "
-        "matters for their specific goal\n"
-        "- success_criteria: how they will concretely know this milestone "
-        "is actually complete (a specific, checkable outcome, not a vague "
-        "feeling of readiness)\n"
+        "matters for THIS person's specific goal - reference their actual "
+        "stated goal or skills by name, don't write something generic "
+        "that could apply to anyone\n"
+        "- success_criteria: a specific, checkable outcome someone else "
+        "could verify - not a feeling of readiness (e.g. 'you have a "
+        "live link you'd send a stranger', not 'you feel confident')\n"
         "- estimated_timeframe: a realistic duration for this one step "
         "(e.g. '2-3 weeks', '1-2 months')\n"
+        "- first_action: the literal, physical first thing to do TODAY "
+        "to start this milestone - specific enough that someone could "
+        "do it in the next hour, not 'start researching'\n"
         "- stage: the order number, starting at 1\n\n"
-        "If skill gaps were listed above, at least one milestone should "
-        "directly address closing one of them. Return ONLY valid JSON, an "
-        "array of objects with exactly those five keys, nothing else, no "
-        "markdown fences, no commentary."
+        "If skill gaps were listed above, at least one milestone must "
+        "directly address closing one of them by name. Return ONLY valid "
+        "JSON, an array of objects with exactly those six keys, nothing "
+        "else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1200,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
     )
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
