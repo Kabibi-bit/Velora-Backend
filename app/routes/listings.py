@@ -16,6 +16,7 @@ def _profile_to_dict(p: Profile) -> dict:
         "dealbreakers": p.dealbreakers or "",
         "priorities": p.priorities or [],
         "target_types": p.target_types or [],
+        "location_pref": p.location_pref or "",
     }
  
  
@@ -115,4 +116,67 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     result["auto_applied"] = auto_applied
  
     return result
+ 
+ 
+@router.get("/matches/{user_id}/explain/{listing_id}")
+def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """On-demand DEEP explanation of why a listing is a good match -
+    a real Claude call producing an actual paragraph grounded in the
+    full profile, the listing, and the roadmap if one exists. This is
+    separate from the free, instant explain_score() text that ships
+    with every match by default - that one covers the same signals
+    but as a quick multi-clause sentence. This endpoint is for when
+    someone wants more depth than that, and is deliberately only
+    called when asked for, not automatically for every listing in a
+    scan (which would multiply your Anthropic usage by however many
+    matches are returned, every cycle).
+    """
+    import os
+    import anthropic
+    from app.models.db_models import RoadmapMilestone
+ 
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    milestones = (
+        db.query(RoadmapMilestone)
+        .filter(RoadmapMilestone.user_id == user_id)
+        .order_by(RoadmapMilestone.target_stage)
+        .all()
+    )
+    roadmap_line = ""
+    if milestones:
+        roadmap_line = "Their roadmap:\n" + "\n".join(f"{m.target_stage}. {m.title}" for m in milestones) + "\n\n"
+ 
+    prompt = (
+        f"A candidate's goal: \"{profile.northstar}\". What 'made it' looks like: \"{profile.final_idea or ''}\". "
+        f"Their skills: \"{profile.skills or ''}\". What matters most to them: {', '.join(profile.priorities or [])}. "
+        f"Location preference: \"{profile.location_pref or ''}\".\n\n"
+        f"{roadmap_line}"
+        f"A listing they're considering: \"{listing.title}\" at {listing.org} ({listing.type}), "
+        f"location {listing.location or 'unspecified'}, tags: {', '.join(listing.tags or [])}.\n\n"
+        "Write a genuine, specific 3-4 sentence case for why this is or isn't a strong match for "
+        "THIS candidate specifically - reference their actual goal, skills, priorities, and roadmap "
+        "by name where relevant. Be honest about weak fit if it's weak, don't oversell. No generic "
+        "filler like 'this could be a great opportunity' - every sentence should reference a specific "
+        "fact about the candidate or the listing."
+    )
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
+    return {"listing_id": listing_id, "listing_title": listing.title, "explanation": explanation}
  
