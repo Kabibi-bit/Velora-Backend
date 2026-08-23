@@ -153,3 +153,41 @@ def get_potential_score(user_id: str, db: Session = Depends(get_db)):
         "match_quality": match_quality,
     }
  
+ 
+class AutoApplySettingsIn(BaseModel):
+    enabled: bool
+    threshold: int = 80
+ 
+ 
+@router.post("/{user_id}/auto-apply-settings")
+def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Session = Depends(get_db)):
+    """Turns Auto Apply mode on/off and sets the confidence threshold
+    that determines what gets auto-drafted-and-queued during a scan,
+    versus what only gets surfaced as a regular match.
+    """
+    if payload.threshold < 50 or payload.threshold > 100:
+        raise HTTPException(status_code=400, detail="threshold must be between 50 and 100")
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    profile.auto_apply_enabled = payload.enabled
+    profile.auto_apply_threshold = payload.threshold
+    db.commit()
+    return {"status": "updated", "enabled": profile.auto_apply_enabled, "threshold": profile.auto_apply_threshold}
+ 
+ 
+@router.get("/{user_id}/auto-apply-settings")
+def get_auto_apply_settings(user_id: str, db: Session = Depends(get_db)):
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    return {"enabled": profile.auto_apply_enabled, "threshold": profile.auto_apply_threshold}
+ 
