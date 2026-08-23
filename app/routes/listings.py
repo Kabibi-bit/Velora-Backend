@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
-from app.services.matching import rank_listings, get_tag_weights_from_outcomes
+from app.services.matching import rank_listings, get_tag_weights_from_outcomes, compute_roadmap_alignment
  
 router = APIRouter(prefix="/listings", tags=["listings"])
  
@@ -29,32 +29,6 @@ def _listing_to_dict(l: Listing) -> dict:
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
     }
- 
- 
-def _compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
-    """Fast, free, deterministic alignment between a listing and the
-    user's roadmap - tag overlap against each milestone's title and
-    description. This runs for every match, not just a handful,
-    unlike the old approach which called Claude live per-listing and
-    silently capped at 5. The deep, AI-written explanation is still
-    available on demand via GET /roadmap/{user_id}/explain/{listing_id} -
-    this heuristic is what makes every match show *some* grounded
-    roadmap context immediately, for free.
-    """
-    if not milestones:
-        return None
-    listing_tags = set(t.lower() for t in listing.get("tags", []))
-    best_stage, best_overlap = None, 0
-    for m in milestones:
-        milestone_text = (m["title"] + " " + m["description"]).lower()
-        overlap = sum(1 for tag in listing_tags if tag in milestone_text)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_stage = m
-    if not best_stage or best_overlap == 0:
-        return None
-    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
- 
  
 @router.get("/matches/{user_id}")
 def get_matches(user_id: str, db: Session = Depends(get_db)):
@@ -102,7 +76,7 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     )
     milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
     for listing in ranked:
-        listing["roadmap_alignment"] = _compute_roadmap_alignment(listing, milestone_dicts)
+        listing["roadmap_alignment"] = compute_roadmap_alignment(listing, milestone_dicts)
  
     return {"matches": ranked, "profile_id": str(profile.id), "outcomes_considered": len(outcome_dicts)}
  
@@ -111,13 +85,34 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
 async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     """Manually triggers an immediate scan: pulls fresh listings from
     Adzuna (if any are new), then re-scores everything for this user.
-    This is what actually populates the listings table on a manual
-    trigger, rather than only scoring whatever's already there.
+    If the user has Auto Apply mode enabled, this also automatically
+    drafts and queues applications for every eligible match above
+    their configured threshold - no manual starring required.
     """
+    import os
+    import anthropic
     from app.services.scheduler import run_scan_for_user, _pull_and_store_new_listings
+    from app.services.auto_apply import create_application_for_match
  
     new_count = await _pull_and_store_new_listings(db)
     result = run_scan_for_user(db, user_id)
     result["new_listings_pulled"] = new_count
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    auto_applied = []
+    if profile and profile.auto_apply_enabled:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        listings = db.query(Listing).all()
+        ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
+        for listing in ranked:
+            outcome = create_application_for_match(db, client, user_id, listing["id"], auto_generated=True)
+            if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
+                auto_applied.append({"listing_id": listing["id"], "title": listing["title"], "confidence": outcome["composite_confidence"]})
+    result["auto_applied"] = auto_applied
+ 
     return result
  
