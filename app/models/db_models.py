@@ -93,9 +93,18 @@ class RoadmapMilestone(Base):
     success_criteria = Column(Text)
     estimated_timeframe = Column(String)
     first_action = Column(Text)
+    resource = Column(Text)
+    risk = Column(Text)
     target_stage = Column(Integer, nullable=False)
     status = Column(String, default="planned")
     created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class RoadmapSummary(Base):
+    __tablename__ = "roadmap_summaries"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    summary = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
  
  
 class ChatMemory(Base):
