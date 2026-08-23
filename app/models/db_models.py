@@ -40,6 +40,8 @@ class Profile(Base):
     target_types = Column(ARRAY(String))
     is_current = Column(Boolean, default=True)
     open_to_offers = Column(Boolean, nullable=False, default=False)
+    auto_apply_enabled = Column(Boolean, nullable=False, default=False)
+    auto_apply_threshold = Column(Integer, nullable=False, default=80)
     created_at = Column(DateTime, default=datetime.utcnow)
  
     user = relationship("User", back_populates="profiles")
@@ -125,6 +127,7 @@ class Application(Base):
     status = Column(String, default="pending_review")
     sendable_at = Column(DateTime)
     sent_at = Column(DateTime)
+    auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
@@ -198,3 +201,4 @@ class Notification(Base):
     detail = Column(Text)
     is_read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+ 
