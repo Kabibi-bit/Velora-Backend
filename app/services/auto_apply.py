@@ -159,3 +159,87 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         "auto_generated": auto_generated,
     }
  
+ 
+def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str, auto_generated: bool = False):
+    """The Auto mode outreach counterpart to create_application_for_match:
+    when Auto is enabled, this runs automatically for eligible matches
+    during a scan and DRAFTS a referral outreach email - guessed
+    contact address, subject, and body - but never sends it. It lands
+    in Workshop with status 'drafted', where the user reviews, can
+    edit, and explicitly clicks send. No email leaves the app from
+    this function under any circumstance.
+    """
+    from app.models.db_models import Profile, Listing, OutreachEmail
+    from app.services.email_send import guess_contact_emails
+    import os
+    import anthropic as anthropic_module
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        return {"error": "no_profile"}
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        return {"error": "listing_not_found"}
+ 
+    existing = (
+        db.query(OutreachEmail)
+        .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+        .first()
+    )
+    if existing:
+        return {"outreach_id": str(existing.id), "status": existing.status, "already_existed": True}
+ 
+    guess = guess_contact_emails(listing.org)
+    if not guess.get("candidates"):
+        return {"error": "no_contact_guess"}
+ 
+    prompt = (
+        f"A candidate is applying to \"{listing.title}\" at {listing.org} ({listing.type}), "
+        f"tags: {', '.join(listing.tags or [])}. Their background: skills \"{profile.skills or ''}\", "
+        f"goal \"{profile.northstar}\".\n\n"
+        "Write a genuine, specific 80-120 word referral outreach email body, plus a short subject "
+        "line. Reference the candidate's real skills/goal and the specific role, ask for a short "
+        "conversation or referral, no generic flattery. Return ONLY valid JSON with exactly two "
+        "keys: 'subject' and 'body'. No markdown fences."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"error": "draft_generation_failed"}
+ 
+    draft = OutreachEmail(
+        user_id=user_id,
+        listing_id=listing_id,
+        to_address=guess["candidates"][0],
+        address_verified=False,
+        subject=parsed.get("subject", f"Regarding {listing.title}"),
+        body=parsed.get("body", ""),
+        status="drafted",
+        auto_generated=auto_generated,
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+ 
+    return {
+        "outreach_id": str(draft.id),
+        "to_address": draft.to_address,
+        "subject": draft.subject,
+        "status": "drafted",
+        "already_existed": False,
+        "auto_generated": auto_generated,
+    }
+ 
