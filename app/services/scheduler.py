@@ -15,6 +15,7 @@ from app.services.ingestion import (
     fetch_adzuna, normalize_adzuna, dedupe_listings, extract_tags,
     fetch_simplify_internships, parse_simplify_markdown,
     fetch_scholarships, normalize_scholarship,
+    fetch_athletic_career_jobs, normalize_athletic_job,
 )
 from app.services.matching import rank_listings
  
@@ -118,6 +119,34 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             stored_count += 1
     except Exception as e:
         print(f"ScholarshipAPI ingestion failed (non-fatal): {e}")
+ 
+    # Source 4: Athletic-career jobs (coaching, athletic training, sports
+    # management) - real data via the same Adzuna connection, just
+    # queried with sports-specific terms. See ingestion.py for why this
+    # is the honest alternative to a dedicated athletic scholarship API,
+    # which doesn't exist as a free public service.
+    try:
+        raw_athletic = await fetch_athletic_career_jobs()
+        athletic_normalized = dedupe_listings([normalize_athletic_job(r) for r in raw_athletic])
+        for item in athletic_normalized:
+            exists = (
+                db.query(Listing)
+                .filter(Listing.source == item["source"], Listing.external_id == item["external_id"])
+                .first()
+            )
+            if exists:
+                continue
+            tags = await extract_tags(item["description"], anthropic_client)
+            tags = list(set(tags + ["athletics"]))  # ensure it's always discoverable by the athletics filter
+            db.add(Listing(
+                source=item["source"], external_id=item["external_id"], title=item["title"],
+                org=item["org"], type=item["type"], location=item["location"],
+                description=item["description"], tags=tags, deadline=item["deadline"],
+                apply_url=item["apply_url"],
+            ))
+            stored_count += 1
+    except Exception as e:
+        print(f"Athletic-career job ingestion failed (non-fatal): {e}")
  
     db.commit()
     return stored_count
