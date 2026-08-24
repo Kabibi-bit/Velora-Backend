@@ -1,0 +1,72 @@
+"""Career discovery for people who don't yet know what direction to
+aim at. Mirrors the frontend's client-side scoring exactly, so the
+demo and the real backend behave identically once connected. Unlike
+typical career-quiz products, every suggested direction is checked
+against real stored listings (how many currently relate to it), and
+the deep explanation is a genuine Claude call grounded in the
+person's actual answers, not a canned description per direction.
+"""
+import re
+ 
+CAREER_DIRECTIONS = [
+    {"id": "product-strategy", "title": "Product & Business Strategy", "description": "Deciding what gets built and why - balancing user needs, data, and business goals.", "dims": {"people": 2, "data": 2, "creative": 1, "structure": 2}, "listing_tags": ["product", "roadmap", "stakeholder", "strategy"]},
+    {"id": "data-analytics", "title": "Data & Analytics", "description": "Finding patterns in information to answer real questions and guide decisions.", "dims": {"people": 0, "data": 3, "creative": 0, "structure": 2}, "listing_tags": ["sql", "python", "analytics", "data", "dashboards"]},
+    {"id": "software-engineering", "title": "Software Engineering", "description": "Building the systems and tools other people and businesses run on.", "dims": {"people": 0, "data": 2, "creative": 1, "structure": 2}, "listing_tags": ["python", "backend development", "ml", "testing"]},
+    {"id": "ux-design", "title": "UX & Design", "description": "Shaping how something looks, feels, and works for the people using it.", "dims": {"people": 2, "data": 0, "creative": 3, "structure": 0}, "listing_tags": ["figma", "user research", "prototyping", "ux"]},
+    {"id": "marketing-comms", "title": "Marketing & Communications", "description": "Telling a story clearly enough that the right people actually hear it.", "dims": {"people": 2, "data": 1, "creative": 2, "structure": 0}, "listing_tags": ["marketing", "writing", "positioning", "growth"]},
+    {"id": "healthcare-science", "title": "Healthcare & Life Sciences", "description": "Working directly on human health, from clinical care to research.", "dims": {"people": 3, "data": 1, "creative": 0, "structure": 2}, "listing_tags": ["sports medicine", "athletic training", "injury prevention", "research"]},
+    {"id": "education-teaching", "title": "Education & Teaching", "description": "Helping other people learn something you understand well.", "dims": {"people": 3, "data": 0, "creative": 1, "structure": 1}, "listing_tags": ["mentorship", "leadership", "coaching", "training"]},
+    {"id": "skilled-trades", "title": "Skilled Trades & Hands-on Work", "description": "Building or fixing real, physical things - work you can see the result of.", "dims": {"people": 1, "data": 0, "creative": 1, "structure": 1}, "listing_tags": ["operations", "process", "training", "conditioning"]},
+    {"id": "creative-media", "title": "Creative & Media", "description": "Making things - writing, video, design, or content people actually engage with.", "dims": {"people": 1, "data": 0, "creative": 3, "structure": 0}, "listing_tags": ["writing", "positioning", "figma", "prototyping"]},
+    {"id": "social-impact", "title": "Social Impact & Nonprofit", "description": "Working on a mission-driven problem where the impact matters more than the paycheck.", "dims": {"people": 3, "data": 1, "creative": 1, "structure": 1}, "listing_tags": ["policy", "ethics", "mentorship", "leadership"]},
+    {"id": "finance-ops", "title": "Finance & Operations", "description": "Keeping the numbers, processes, and logistics of an organization actually working.", "dims": {"people": 0, "data": 2, "creative": 0, "structure": 3}, "listing_tags": ["finance", "excel", "operations", "reporting"]},
+    {"id": "sports-athletics", "title": "Sports & Athletics", "description": "A career built around competition, coaching, or the business of sport.", "dims": {"people": 2, "data": 0, "creative": 1, "structure": 1}, "listing_tags": ["athletics", "coaching", "sports management", "training"]},
+]
+ 
+ 
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-z][a-z\-]{2,}", (text or "").lower())
+ 
+ 
+def score_career_directions(answers: dict, all_listing_tags: list[list[str]]) -> list[dict]:
+    """answers: {people, data, creative, structure} each 0-3, plus free_text.
+    all_listing_tags: the .tags list of every listing currently stored,
+    used to compute a real 'related opportunities' count per direction.
+    """
+    free_text_tokens = _tokenize(answers.get("free_text", ""))
+    results = []
+    for direction in CAREER_DIRECTIONS:
+        dim_diff = (
+            abs(direction["dims"]["people"] - answers.get("people", 1))
+            + abs(direction["dims"]["data"] - answers.get("data", 1))
+            + abs(direction["dims"]["creative"] - answers.get("creative", 1))
+            + abs(direction["dims"]["structure"] - answers.get("structure", 1))
+        )
+        max_diff = 12
+        pct = round((1 - (dim_diff / max_diff)) * 100)
+        text_matches = [t for t in direction["listing_tags"] if any(tok in t or t in tok for tok in free_text_tokens)]
+        pct = min(97, pct + (len(text_matches) * 6))
+        pct = max(20, pct)
+        related_count = sum(1 for tags in all_listing_tags if any(t in direction["listing_tags"] for t in tags))
+        results.append({**direction, "pct": pct, "text_matches": text_matches, "related_count": related_count})
+    return sorted(results, key=lambda d: -d["pct"])
+ 
+ 
+def explain_direction_deep(anthropic_client, direction: dict, answers: dict) -> str:
+    prompt = (
+        f"Someone doesn't yet know what career direction to pursue. They described what energizes them: "
+        f"people-facing work rated {answers.get('people')}/3, data/analytical work rated {answers.get('data')}/3, "
+        f"creative work rated {answers.get('creative')}/3, structured/process work rated {answers.get('structure')}/3. "
+        f"They also said, in their own words: \"{answers.get('free_text', '')}\".\n\n"
+        f"A suggested direction: \"{direction['title']}\" - {direction['description']}\n\n"
+        "Write a genuine, specific 3-4 sentence case for why this direction could fit THEM based on what "
+        "they described - reference their actual words where relevant. Then give one concrete, low-commitment "
+        "first step they could take this week to test whether it actually fits (not 'research the field' - "
+        "something specific and doable). Be honest if the fit seems only partial."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip()
