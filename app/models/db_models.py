@@ -9,7 +9,7 @@ from sqlalchemy import (
     Column, String, Text, ForeignKey, DateTime, Numeric, Integer,
     ARRAY, Boolean, Date
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
  
 Base = declarative_base()
@@ -200,5 +200,27 @@ class Notification(Base):
     title = Column(String, nullable=False)
     detail = Column(Text)
     is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class CareerDiscoveryResult(Base):
+    __tablename__ = "career_discovery_results"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    answers = Column(JSONB, nullable=False)
+    directions = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class OutreachEmail(Base):
+    __tablename__ = "outreach_emails"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
+    to_address = Column(String, nullable=False)
+    address_verified = Column(Boolean, nullable=False, default=False)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
+    auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
  
