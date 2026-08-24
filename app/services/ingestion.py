@@ -40,6 +40,48 @@ def normalize_adzuna(raw: dict) -> dict:
     }
  
  
+# Search terms covering real sporting-career job categories: coaching,
+# athletic training, sports administration/management, and recreation.
+# There is no free public API for athletic SCHOLARSHIPS specifically
+# (NCSA and similar recruiting platforms are proprietary, no developer
+# access) - this is the honest, real alternative: querying the same
+# Adzuna connection already in use, but for real sports-career jobs
+# instead of scholarships. Scholarship-type listings still need to go
+# through /listings/manual until a real scholarship data source exists.
+ATHLETIC_CAREER_QUERIES = [
+    "athletic coach",
+    "athletic trainer",
+    "sports coordinator",
+    "sports management",
+    "recreation coordinator",
+    "strength and conditioning coach",
+]
+ 
+ 
+async def fetch_athletic_career_jobs(location: str = "us") -> list[dict]:
+    """Pulls real sporting-career job listings from Adzuna - the same
+    connection already used for general jobs, just queried with
+    sports-specific terms. This is real data, not mocked.
+    """
+    all_results = []
+    for query in ATHLETIC_CAREER_QUERIES:
+        try:
+            results = await fetch_adzuna(query, location=location)
+            all_results.extend(results)
+        except Exception:
+            continue  # one query failing shouldn't block the others
+    return all_results
+ 
+ 
+def normalize_athletic_job(raw: dict) -> dict:
+    """Same shape as normalize_adzuna, but tagged as 'athletic' so it
+    surfaces correctly in the Athlete dashboard and its matching engine.
+    """
+    normalized = normalize_adzuna(raw)
+    normalized["type"] = "athletic"
+    return normalized
+ 
+ 
 def dedupe_listings(listings: list[dict]) -> list[dict]:
     seen = set()
     out = []
@@ -228,3 +270,4 @@ def normalize_scholarship(raw: dict) -> dict:
         "deadline": deadline,
         "apply_url": apply_url or "https://scholarshipapi.com",  # honest fallback, see note above
     }
+ 
