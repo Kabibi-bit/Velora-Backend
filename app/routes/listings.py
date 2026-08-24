@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
@@ -180,3 +181,135 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
     return {"listing_id": listing_id, "listing_title": listing.title, "explanation": explanation}
  
+ 
+@router.get("/matches/{user_id}/connect/{listing_id}")
+def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """Generates a real referral/networking strategy for a specific
+    listing - who to look for, how to actually find them, and a
+    tailored outreach message. This deliberately does NOT invent a
+    real named person at the company: there is no data source
+    connected here that has real employee/contact information, and
+    fabricating a name would be presenting made-up data as real,
+    which is a much worse outcome than being upfront that this is
+    guidance rather than an actual contact lookup.
+    """
+    import os
+    import anthropic
+ 
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    prompt = (
+        f"A candidate is applying to \"{listing.title}\" at {listing.org} ({listing.type}), "
+        f"tags: {', '.join(listing.tags or [])}. Their background: skills \"{profile.skills or ''}\", "
+        f"goal \"{profile.northstar}\".\n\n"
+        "Help them get a real human connection at this company before applying cold. Return a JSON "
+        "object with exactly these three keys:\n"
+        "- contact_type: the specific TYPE of person worth reaching out to for this role (e.g. "
+        "'someone currently in a similar individual-contributor role on this team' or 'the hiring "
+        "manager, likely titled X') - a role description, never a real invented name\n"
+        "- search_guidance: 1-2 concrete sentences on exactly how to actually find that person - "
+        "specific search terms or approach (e.g. what to search on LinkedIn, alumni networks, or "
+        "a company's team page), not 'network more'\n"
+        "- outreach_message: a genuine, specific 80-120 word message they could send once they find "
+        "someone - reference the candidate's real skills/goal and the specific role, ask for a short "
+        "conversation or referral, not generic flattery\n\n"
+        "Return ONLY valid JSON with exactly those three keys, nothing else, no markdown fences."
+    )
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+ 
+    import json
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Could not generate a connection strategy just now - try again.")
+ 
+    return {
+        "listing_id": listing_id,
+        "listing_title": listing.title,
+        "listing_org": listing.org,
+        "contact_type": parsed.get("contact_type", ""),
+        "search_guidance": parsed.get("search_guidance", ""),
+        "outreach_message": parsed.get("outreach_message", ""),
+    }
+ 
+ 
+@router.get("/matches/{user_id}/connect/{listing_id}/guess-email")
+def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """Returns a best-guess general contact address for the company -
+    explicitly NOT a specific verified person, since no real employee
+    lookup is connected. The frontend shows this to the user before
+    any send happens - this is the one confirmation step that stays
+    in place regardless of how the send flow is triggered.
+    """
+    from app.services.email_send import guess_contact_emails
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    guess = guess_contact_emails(listing.org)
+    return {"listing_id": listing_id, "listing_org": listing.org, **guess}
+ 
+ 
+class SendOutreachIn(BaseModel):
+    to_address: str
+    subject: str
+    body: str
+    address_verified: bool = False
+ 
+ 
+@router.post("/matches/{user_id}/connect/{listing_id}/send-email")
+def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, db: Session = Depends(get_db)):
+    """Actually sends a real email via Resend, and logs it. The
+    to_address must be supplied by the caller (i.e. shown to and
+    confirmed by the user in the frontend first) - this endpoint does
+    not look up or choose the recipient itself.
+    """
+    from app.services.email_send import send_email
+    from app.models.db_models import OutreachEmail
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    status = "sent"
+    error_detail = None
+    try:
+        send_email(payload.to_address, payload.subject, payload.body)
+    except Exception as e:
+        status = "failed"
+        error_detail = str(e)
+ 
+    log = OutreachEmail(
+        user_id=user_id,
+        listing_id=listing_id,
+        to_address=payload.to_address,
+        address_verified=payload.address_verified,
+        subject=payload.subject,
+        body=payload.body,
+        status=status,
+    )
+    db.add(log)
+    db.commit()
+ 
+    if status == "failed":
+        raise HTTPException(status_code=502, detail=f"Send failed: {error_detail}")
+    return {"status": "sent", "to_address": payload.to_address}
