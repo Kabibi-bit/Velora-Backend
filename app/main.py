@@ -3,21 +3,22 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-
-from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, tutors, businesses, saved_listings, notifications, career_discovery, outreach
+ 
+from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, tutors, businesses, saved_listings, notifications, career_discovery, outreach, auth
 from app.services.scheduler import start_scheduler
-
+ 
 load_dotenv()
-
+ 
 app = FastAPI(title="Scanline API")
-
+ 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+ 
+app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(profile.router)
 app.include_router(listings.router)
@@ -32,8 +33,8 @@ app.include_router(saved_listings.router)
 app.include_router(notifications.router)
 app.include_router(career_discovery.router)
 app.include_router(outreach.router)
-
-
+ 
+ 
 # TEMPORARY DEBUG HANDLER: shows the real error directly in the API
 # response instead of only in Render's logs, so it's easy to read.
 # Remove this once things are working -- it can leak internal details.
@@ -47,13 +48,14 @@ async def debug_exception_handler(request: Request, exc: Exception):
             "traceback": traceback.format_exc(),
         },
     )
-
-
+ 
+ 
 @app.on_event("startup")
 def on_startup():
     start_scheduler()
-
-
+ 
+ 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+ 
