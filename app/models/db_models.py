@@ -224,3 +224,33 @@ class OutreachEmail(Base):
     status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class SocialPost(Base):
+    __tablename__ = "social_posts"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    body = Column(Text, nullable=False)
+    video_url = Column(String)
+    roadmap_stage = Column(Integer)
+    roadmap_stage_title = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class SocialComment(Base):
+    __tablename__ = "social_comments"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    post_id = Column(UUID(as_uuid=True), ForeignKey("social_posts.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class SocialConnection(Base):
+    __tablename__ = "social_connections"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    target_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    status = Column(String, nullable=False, default="pending")  # pending / accepted / declined
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
