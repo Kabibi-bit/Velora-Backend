@@ -19,7 +19,8 @@ class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, unique=True, nullable=False)
-    role = Column(String, nullable=False, default="candidate")  # candidate / business / tutor
+    password_hash = Column(String, nullable=True)  # nullable for backward-compat with any users created before auth existed
+    role = Column(String, nullable=False, default="candidate")  # candidate / business / tutor / athlete
     created_at = Column(DateTime, default=datetime.utcnow)
  
     profiles = relationship("Profile", back_populates="user")
@@ -223,4 +224,3 @@ class OutreachEmail(Base):
     status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
- 
