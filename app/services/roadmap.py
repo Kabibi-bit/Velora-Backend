@@ -1,9 +1,9 @@
 """Generates a real career roadmap from a user's profile using Claude,
 and explains how a specific listing fits into that roadmap. Each
 milestone includes success criteria, a timeframe, a first action, a
-concrete resource to use, and the most common way this specific step
-goes wrong -- this is what turns it into a real plan instead of a
-motivational list.
+concrete resource to use, the most common way this specific step
+goes wrong, and what to do whether it works out or stalls -- this is
+what turns it into a real plan instead of a motivational list.
 """
 import json
  
@@ -14,7 +14,7 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
     'summary' (why this order, what the overall strategy is) and
     'milestones' (a list of dicts with title, description,
     success_criteria, estimated_timeframe, first_action, resource,
-    risk, and stage).
+    risk, if_it_works, if_it_stalls, and stage).
     """
     gap_line = (
         f"Skills that show up often in listings that match their goal, but aren't in their stated skills yet: {', '.join(skill_gaps)}.\n"
@@ -41,7 +41,7 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
         "why these stages happen in this specific order, and what the "
         "single biggest risk to the whole plan is.\n\n"
         "2. \"milestones\": an array of 4-6 objects, each with exactly "
-        "these seven keys:\n"
+        "these nine keys:\n"
         "- title: a concrete action naming a real artifact or outcome "
         "(e.g. 'Ship a SQL-based analytics project using a real public "
         "dataset', not 'Build skills')\n"
@@ -65,6 +65,10 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
         "THIS specific milestone, and one sentence on how to avoid it - "
         "grounded, not generic ('running out of time' is not a risk, "
         "'picking a project too broad to finish in 3 weeks' is)\n"
+        "- if_it_works: 1 sentence on the real next move once this "
+        "milestone succeeds\n"
+        "- if_it_stalls: 1 sentence of honest, concrete guidance for "
+        "what to do if this milestone doesn't pan out as hoped\n"
         "- stage: the order number, starting at 1\n\n"
         "If skill gaps were listed above, at least one milestone must "
         "directly address closing one of them by name. Return ONLY valid "
