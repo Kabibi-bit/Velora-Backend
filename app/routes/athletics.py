@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import anthropic
  
-from app.services.athletics import generate_recruiting_content_plan
+from app.services.athletics import generate_recruiting_content_plan, research_target_program
  
 router = APIRouter(prefix="/athletics", tags=["athletics"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -38,4 +38,26 @@ def content_coach(payload: ContentPlanIn):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate a content plan just now: {e}")
     return plan
+ 
+ 
+class ProgramResearchIn(BaseModel):
+    sport: str
+    level: str
+    program_name: str
+ 
+ 
+@router.post("/research-program")
+def research_program(payload: ProgramResearchIn):
+    """The real-search upgrade: gives Claude the actual Anthropic web
+    search tool to find and cite genuine, current public information
+    about a specific named program, rather than general knowledge.
+    Reports plainly when search doesn't turn up anything specific.
+    """
+    if not payload.program_name.strip():
+        raise HTTPException(status_code=400, detail="program_name is required")
+    try:
+        result = research_target_program(client, payload.sport, payload.level, payload.program_name)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not research this program just now: {e}")
+    return result
  
