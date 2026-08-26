@@ -233,8 +233,8 @@ class SocialPost(Base):
     roadmap stage. This used to be part of a cross-user social feed
     with connections and comments - cut down deliberately, since a
     feed needs real other users to have any value, and a connection
-    feature carries a real moderation/safety workload that isn't
-    worth taking on before there's anyone real to connect with.
+    feature carries a real moderation/safety workload that isnt
+    worth taking on before theres anyone real to connect with.
     """
     __tablename__ = "social_posts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
