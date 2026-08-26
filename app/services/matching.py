@@ -141,6 +141,29 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
     return scored[:top_n]
  
  
+def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """The 'why not' transparency feature - most job boards silently
+    drop everything below the cutoff. This surfaces the next several
+    listings just below it, with the SAME real, grounded rationale
+    already computed for every listing (not a separately-invented
+    negative framing) - genuine reasoning, shown either way.
+    """
+    tag_weights = tag_weights or {}
+    scored = []
+    for listing in listings:
+        if listing["type"] not in profile.get("target_types", []):
+            continue
+        match = score_listing(listing, profile)
+        if match is None:
+            continue
+        adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
+        match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
+        match["rationale"] = explain_score(listing, match, profile)
+        scored.append({**listing, **match})
+    scored.sort(key=lambda l: l["score_pct"], reverse=True)
+    return scored[:top_n], scored[top_n:top_n + near_miss_n]
+ 
+ 
 def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
     """Fast, free, deterministic alignment between a listing and the
     user's roadmap - tag overlap against each milestone's title and
