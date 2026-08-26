@@ -55,3 +55,30 @@ def get_outcome_stats(user_id: str, db: Session = Depends(get_db)):
         "by_month": by_month,
     }
  
+ 
+@router.get("/{user_id}/calibration")
+def get_calibration(user_id: str, db: Session = Depends(get_db)):
+    """Is Velora's own confidence score actually trustworthy for THIS
+    user? Joins real logged outcomes back to the confidence score each
+    application had when sent, and reports the real conversion rate
+    per confidence bucket. This is the honest, self-auditing feature -
+    it will show unflattering numbers if the score isn't well
+    calibrated for someone, rather than hiding that.
+    """
+    from app.models.db_models import Application
+    from app.services.calibration import compute_calibration
+ 
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    applications = db.query(Application).filter(Application.user_id == user_id).all()
+ 
+    outcome_dicts = [{"listing_id": str(o.listing_id), "status": o.status} for o in outcomes]
+    app_dicts = [{"listing_id": str(a.listing_id), "confidence_pct": a.confidence_pct} for a in applications]
+ 
+    calibration = compute_calibration(app_dicts, outcome_dicts)
+    total_with_outcomes = sum(b["total_with_outcomes"] for b in calibration.values())
+    return {
+        "calibration": calibration,
+        "total_applications_with_logged_outcomes": total_with_outcomes,
+        "note": "Buckets with fewer than a handful of outcomes aren't statistically meaningful yet - log more real outcomes to sharpen this." if total_with_outcomes < 5 else None,
+    }
+ 
