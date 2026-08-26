@@ -187,3 +187,57 @@ def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_dir
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(text)
  
+ 
+def generate_athlete_roadmap(anthropic_client, sport: str, level: str, career_direction: str, achievements: str) -> dict:
+    """The real backend roadmap generator for athletes - this never
+    existed server-side before; the athlete roadmap has been
+    frontend/localStorage-only up to this point. Built to the FULL
+    rich standard (including if_it_works/if_it_stalls branching),
+    which is actually more complete than the candidate roadmap's
+    current backend, which doesn't have branching yet - only the
+    candidate frontend does.
+    """
+    direction_label = {
+        "play-college": "playing at the college level",
+        "go-pro": "going pro",
+        "coach": "coaching",
+        "sports-management": "a sports management career",
+    }.get(career_direction, career_direction)
+ 
+    prompt = (
+        f"A student-athlete: sport \"{sport}\", current level {level}, career direction: {direction_label}. "
+        f"Their stated achievements: \"{achievements}\".\n\n"
+        "Generate a REAL, actionable roadmap from where they are now to that goal.\n\n"
+        "BANNED as too vague, do not use language like this anywhere: 'build skills', 'gain experience', "
+        "'network more', 'stay consistent', 'work hard', or any milestone that doesn't name a specific "
+        "artifact, action, or outcome. If a milestone could apply to any athlete in any sport, rewrite it "
+        "until it could only apply to THIS athlete's specific sport, level, and direction.\n\n"
+        "Return a JSON object with exactly two top-level keys:\n\n"
+        "1. \"summary\": 2-3 sentences explaining the overall strategy - why these stages happen in this "
+        "specific order, and what the single biggest risk to the whole plan is.\n\n"
+        "2. \"milestones\": an array of 4-6 objects, each with exactly these nine keys:\n"
+        "- title: a concrete action naming a real artifact or outcome specific to this sport and direction\n"
+        "- description: 1-2 sentences on exactly what to do and why it matters for THIS athlete specifically\n"
+        "- success_criteria: a specific, checkable outcome someone else could verify - not a feeling of readiness\n"
+        "- estimated_timeframe: a realistic duration for this one step (e.g. '2-3 weeks', '1-2 months')\n"
+        "- first_action: the literal, physical first thing to do TODAY to start this milestone\n"
+        "- resource: ONE concrete, real category of resource to use (e.g. 'your school's athletic "
+        "department', 'a public results/stats page for your league'). Never invent a specific named "
+        "person, program, or URL that may not be real.\n"
+        "- risk: the single most common way athletes fail or stall on THIS specific milestone, grounded "
+        "and specific, not generic\n"
+        "- if_it_works: 1 sentence on the real next move once this milestone succeeds\n"
+        "- if_it_stalls: 1 sentence of honest, concrete guidance for what to do if this milestone doesn't "
+        "pan out as hoped\n"
+        "- stage: the order number, starting at 1\n\n"
+        "Return ONLY valid JSON, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+ 
