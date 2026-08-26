@@ -283,3 +283,32 @@ class AthleteOutreach(Base):
     status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     created_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class AthleteRoadmapMilestone(Base):
+    """Real backend roadmap for athletes - mirrors RoadmapMilestone,
+    plus if_it_works/if_it_stalls branching which the candidate
+    backend roadmap doesn't even have yet (only the frontend does).
+    """
+    __tablename__ = "athlete_roadmap_milestones"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    title = Column(String, nullable=False)
+    description = Column(Text)
+    success_criteria = Column(Text)
+    estimated_timeframe = Column(String)
+    first_action = Column(Text)
+    resource = Column(Text)
+    risk = Column(Text)
+    if_it_works = Column(Text)
+    if_it_stalls = Column(Text)
+    target_stage = Column(Integer, nullable=False)
+    status = Column(String, default="planned")
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class AthleteRoadmapSummary(Base):
+    __tablename__ = "athlete_roadmap_summaries"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    summary = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+ 
