@@ -174,3 +174,51 @@ def undo_application(application_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "undone"}
  
+ 
+@router.get("/{application_id}/explain-outcome")
+def explain_outcome(application_id: str, db: Session = Depends(get_db)):
+    """The rejection/ghost autopsy - a real, specific comparison of what
+    was actually sent against the actual listing, grounded in the real
+    outcome logged for it. Requires an outcome to already be logged via
+    POST /outcomes for this listing, since there's nothing to analyze
+    against otherwise.
+    """
+    import os
+    import anthropic
+    from app.models.db_models import Listing, Profile, Outcome
+    from app.services.calibration import explain_outcome_deep
+ 
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+ 
+    outcome = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == app_record.user_id, Outcome.listing_id == app_record.listing_id)
+        .order_by(Outcome.updated_at.desc())
+        .first()
+    )
+    if not outcome:
+        raise HTTPException(status_code=400, detail="No outcome logged for this application yet - log one via POST /outcomes first")
+    if outcome.status not in {"rejected", "ghosted"}:
+        raise HTTPException(status_code=400, detail="Autopsy is only meaningful for a rejected or ghosted outcome")
+ 
+    listing = db.query(Listing).filter(Listing.id == app_record.listing_id).first()
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == app_record.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not listing or not profile:
+        raise HTTPException(status_code=404, detail="Listing or profile not found")
+ 
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    listing_dict = {"title": listing.title, "org": listing.org, "tags": listing.tags or []}
+    profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
+ 
+    explanation = explain_outcome_deep(
+        client, listing_dict, app_record.draft_content,
+        float(app_record.confidence_pct or 0), outcome.status, profile_dict,
+    )
+    return {"application_id": application_id, "outcome_status": outcome.status, "explanation": explanation}
+ 
