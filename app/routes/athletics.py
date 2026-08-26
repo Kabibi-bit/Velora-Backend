@@ -1,9 +1,14 @@
 import os
-from fastapi import APIRouter, HTTPException
+from datetime import date
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 import anthropic
  
-from app.services.athletics import generate_recruiting_content_plan, research_target_program
+from app.db import get_db
+from app.models.db_models import AthleteEvent, AthleteOutreach, AthleteRoadmapMilestone, AthleteRoadmapSummary
+from app.services.athletics import generate_recruiting_content_plan, research_target_program, draft_coach_outreach, generate_clip_edit_plan, generate_athlete_roadmap
+from app.services.email_send import guess_contact_emails, send_email
  
 router = APIRouter(prefix="/athletics", tags=["athletics"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -60,4 +65,326 @@ def research_program(payload: ProgramResearchIn):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not research this program just now: {e}")
     return result
+ 
+ 
+VALID_EVENT_TYPES = {"tryout", "camp", "combine", "application_deadline", "other"}
+VALID_EVENT_STATUSES = {"upcoming", "attended", "passed", "missed"}
+ 
+ 
+class EventIn(BaseModel):
+    user_id: str
+    title: str
+    org: str | None = None
+    event_type: str
+    event_date: date | None = None
+    roadmap_stage: int | None = None
+    roadmap_stage_title: str | None = None
+    notes: str | None = None
+ 
+ 
+@router.post("/events")
+def create_event(payload: EventIn, db: Session = Depends(get_db)):
+    """Tracks a deadline or trial opportunity - a tryout, camp,
+    combine, or application deadline - optionally tied to a specific
+    roadmap stage.
+    """
+    if payload.event_type not in VALID_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"event_type must be one of {VALID_EVENT_TYPES}")
+    event = AthleteEvent(
+        user_id=payload.user_id, title=payload.title, org=payload.org,
+        event_type=payload.event_type, event_date=payload.event_date,
+        roadmap_stage=payload.roadmap_stage, roadmap_stage_title=payload.roadmap_stage_title,
+        notes=payload.notes,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return {"event_id": str(event.id), "status": "created"}
+ 
+ 
+@router.get("/events/{user_id}")
+def list_events(user_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(AthleteEvent)
+        .filter(AthleteEvent.user_id == user_id)
+        .order_by(AthleteEvent.event_date.asc().nullslast())
+        .all()
+    )
+    return [
+        {
+            "id": str(e.id), "title": e.title, "org": e.org, "event_type": e.event_type,
+            "event_date": e.event_date.isoformat() if e.event_date else None,
+            "roadmap_stage": e.roadmap_stage, "roadmap_stage_title": e.roadmap_stage_title,
+            "status": e.status, "notes": e.notes, "created_at": e.created_at.isoformat(),
+        }
+        for e in rows
+    ]
+ 
+ 
+class EventStatusIn(BaseModel):
+    status: str
+ 
+ 
+@router.post("/events/{event_id}/status")
+def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Depends(get_db)):
+    if payload.status not in VALID_EVENT_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {VALID_EVENT_STATUSES}")
+    event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    event.status = payload.status
+    db.commit()
+    return {"status": "updated", "event_status": event.status}
+ 
+ 
+@router.delete("/events/{event_id}")
+def delete_event(event_id: str, db: Session = Depends(get_db)):
+    event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.delete(event)
+    db.commit()
+    return {"status": "deleted"}
+ 
+ 
+class CoachOutreachIn(BaseModel):
+    user_id: str
+    sport: str
+    level: str
+    career_direction: str
+    achievements: str = ""
+    target_description: str
+    org_name: str
+    roadmap_stage: int | None = None
+    roadmap_stage_title: str | None = None
+ 
+ 
+@router.post("/outreach")
+def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
+    """Drafts a real email and cold-call script for reaching a coach or
+    staff member, and stores it as a real draft - review/edit/send
+    from here, same lifecycle as every other outreach draft in the
+    app. Never invents a specific named person - only describes the
+    TYPE of contact and gives a real, usable script.
+    """
+    try:
+        drafted = draft_coach_outreach(
+            client, payload.sport, payload.level, payload.career_direction,
+            payload.achievements, payload.target_description,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate outreach just now: {e}")
+ 
+    guess = guess_contact_emails(payload.org_name)
+    if not guess.get("candidates"):
+        raise HTTPException(status_code=400, detail="Could not guess a contact address for this program")
+ 
+    outreach = AthleteOutreach(
+        user_id=payload.user_id,
+        target_description=payload.target_description,
+        to_address=guess["candidates"][0],
+        address_verified=False,
+        subject=drafted["email_subject"],
+        body=drafted["email_body"],
+        cold_call_script=drafted["cold_call_script"],
+        roadmap_stage=payload.roadmap_stage,
+        roadmap_stage_title=payload.roadmap_stage_title,
+    )
+    db.add(outreach)
+    db.commit()
+    db.refresh(outreach)
+    return {
+        "outreach_id": str(outreach.id),
+        "who_to_contact": drafted["who_to_contact"],
+        "how_to_find": drafted["how_to_find"],
+        "to_address": outreach.to_address,
+        "subject": outreach.subject,
+        "body": outreach.body,
+        "cold_call_script": outreach.cold_call_script,
+        "status": "drafted",
+    }
+ 
+ 
+@router.get("/outreach/{user_id}")
+def list_outreach(user_id: str, db: Session = Depends(get_db)):
+    rows = db.query(AthleteOutreach).filter(AthleteOutreach.user_id == user_id).order_by(AthleteOutreach.created_at.desc()).all()
+    return [
+        {
+            "id": str(o.id), "target_description": o.target_description, "to_address": o.to_address,
+            "subject": o.subject, "body": o.body, "cold_call_script": o.cold_call_script,
+            "roadmap_stage": o.roadmap_stage, "roadmap_stage_title": o.roadmap_stage_title,
+            "status": o.status, "created_at": o.created_at.isoformat(),
+        }
+        for o in rows
+    ]
+ 
+ 
+class EditOutreachIn(BaseModel):
+    subject: str | None = None
+    body: str | None = None
+    to_address: str | None = None
+ 
+ 
+@router.patch("/outreach/{outreach_id}")
+def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
+    outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
+    if not outreach:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
+    if outreach.status == "sent":
+        raise HTTPException(status_code=400, detail="Already sent, cannot edit")
+    if payload.subject is not None:
+        outreach.subject = payload.subject
+    if payload.body is not None:
+        outreach.body = payload.body
+    if payload.to_address is not None:
+        outreach.to_address = payload.to_address
+        outreach.address_verified = False
+    db.commit()
+    return {"status": "updated"}
+ 
+ 
+@router.post("/outreach/{outreach_id}/send")
+def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
+    outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
+    if not outreach:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
+    if outreach.status == "sent":
+        raise HTTPException(status_code=400, detail="Already sent")
+    try:
+        send_email(outreach.to_address, outreach.subject, outreach.body)
+        outreach.status = "sent"
+        db.commit()
+        return {"status": "sent", "to_address": outreach.to_address}
+    except Exception as e:
+        outreach.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Send failed: {e}")
+ 
+ 
+class ClipEditPlanIn(BaseModel):
+    sport: str
+    level: str
+    career_direction: str
+    clips_description: str
+ 
+ 
+@router.post("/edit-plan")
+def edit_plan(payload: ClipEditPlanIn):
+    """Not real video editing or processing - there's no video hosting
+    infrastructure in this stack. This is a real, specific edit PLAN
+    grounded in the athlete's own description of their footage, for
+    them to execute in whatever editor they already use.
+    """
+    if not payload.clips_description.strip():
+        raise HTTPException(status_code=400, detail="clips_description is required")
+    try:
+        plan = generate_clip_edit_plan(
+            client, payload.sport, payload.level, payload.career_direction, payload.clips_description
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate an edit plan just now: {e}")
+    return plan
+ 
+ 
+class AthleteRoadmapIn(BaseModel):
+    user_id: str
+    sport: str
+    level: str
+    career_direction: str
+    achievements: str = ""
+ 
+ 
+@router.post("/roadmap")
+def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_db)):
+    """Generates and persists a real roadmap for this athlete -
+    replaces any previous one on regeneration, same behavior as the
+    candidate roadmap endpoint.
+    """
+    if payload.career_direction not in VALID_DIRECTIONS:
+        raise HTTPException(status_code=400, detail=f"career_direction must be one of {VALID_DIRECTIONS}")
+    try:
+        roadmap = generate_athlete_roadmap(
+            client, payload.sport, payload.level, payload.career_direction, payload.achievements
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate a roadmap just now: {e}")
+ 
+    db.query(AthleteRoadmapMilestone).filter(AthleteRoadmapMilestone.user_id == payload.user_id).delete()
+    db.query(AthleteRoadmapSummary).filter(AthleteRoadmapSummary.user_id == payload.user_id).delete()
+ 
+    summary_row = AthleteRoadmapSummary(user_id=payload.user_id, summary=roadmap["summary"])
+    db.add(summary_row)
+ 
+    milestone_rows = []
+    for m in roadmap["milestones"]:
+        row = AthleteRoadmapMilestone(
+            user_id=payload.user_id,
+            title=m["title"], description=m.get("description"),
+            success_criteria=m.get("success_criteria"), estimated_timeframe=m.get("estimated_timeframe"),
+            first_action=m.get("first_action"), resource=m.get("resource"), risk=m.get("risk"),
+            if_it_works=m.get("if_it_works"), if_it_stalls=m.get("if_it_stalls"),
+            target_stage=m["stage"], status="planned",
+        )
+        db.add(row)
+        milestone_rows.append(row)
+ 
+    db.commit()
+    for row in milestone_rows:
+        db.refresh(row)
+ 
+    return {
+        "summary": roadmap["summary"],
+        "milestones": [
+            {
+                "id": str(r.id), "title": r.title, "description": r.description,
+                "success_criteria": r.success_criteria, "estimated_timeframe": r.estimated_timeframe,
+                "first_action": r.first_action, "resource": r.resource, "risk": r.risk,
+                "if_it_works": r.if_it_works, "if_it_stalls": r.if_it_stalls,
+                "stage": r.target_stage, "status": r.status,
+            }
+            for r in milestone_rows
+        ],
+    }
+ 
+ 
+@router.get("/roadmap/{user_id}")
+def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db)):
+    summary_row = db.query(AthleteRoadmapSummary).filter(AthleteRoadmapSummary.user_id == user_id).first()
+    if not summary_row:
+        raise HTTPException(status_code=404, detail="No roadmap generated yet for this user")
+    milestones = (
+        db.query(AthleteRoadmapMilestone)
+        .filter(AthleteRoadmapMilestone.user_id == user_id)
+        .order_by(AthleteRoadmapMilestone.target_stage)
+        .all()
+    )
+    return {
+        "summary": summary_row.summary,
+        "milestones": [
+            {
+                "id": str(m.id), "title": m.title, "description": m.description,
+                "success_criteria": m.success_criteria, "estimated_timeframe": m.estimated_timeframe,
+                "first_action": m.first_action, "resource": m.resource, "risk": m.risk,
+                "if_it_works": m.if_it_works, "if_it_stalls": m.if_it_stalls,
+                "stage": m.target_stage, "status": m.status,
+            }
+            for m in milestones
+        ],
+    }
+ 
+ 
+class MilestoneStatusIn(BaseModel):
+    status: str
+ 
+ 
+@router.post("/roadmap/milestone/{milestone_id}/status")
+def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+    if payload.status not in {"planned", "in_progress", "done"}:
+        raise HTTPException(status_code=400, detail="status must be planned, in_progress, or done")
+    milestone = db.query(AthleteRoadmapMilestone).filter(AthleteRoadmapMilestone.id == milestone_id).first()
+    if not milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    milestone.status = payload.status
+    db.commit()
+    return {"status": milestone.status}
  
