@@ -104,3 +104,86 @@ def research_target_program(anthropic_client, sport: str, level: str, program_na
  
     return {"program_name": program_name, "findings": findings, "sources": sources}
  
+ 
+def draft_coach_outreach(anthropic_client, sport: str, level: str, career_direction: str, achievements: str, target_description: str) -> dict:
+    """Drafts both an email and a cold-call script for reaching a
+    coach or staff member. Same honest boundary as the candidate-side
+    connection strategy: never invents a specific named person, only
+    describes the TYPE of contact and gives real, usable scripts.
+    """
+    direction_label = {
+        "play-college": "playing at the college level",
+        "go-pro": "going pro",
+        "coach": "coaching",
+        "sports-management": "a sports management career",
+    }.get(career_direction, career_direction)
+ 
+    prompt = (
+        f"A student-athlete: sport \"{sport}\", level {level}, career direction: {direction_label}. "
+        f"Achievements: \"{achievements}\". They want to reach out about: \"{target_description}\".\n\n"
+        "Help them make direct contact. Never invent a specific real named person - describe the TYPE of "
+        "contact to look for, not a fabricated name.\n\n"
+        "Return a JSON object with exactly these five keys:\n"
+        "- who_to_contact: the specific type of person worth reaching out to (e.g. 'the assistant coach "
+        "responsible for recruiting at their position/event', or 'the program's recruiting coordinator')\n"
+        "- how_to_find: 1-2 concrete sentences on how to actually find that person - a real search approach, "
+        "not 'network more'\n"
+        "- email_subject: a short, specific email subject line\n"
+        "- email_body: a genuine, specific 100-140 word email referencing their actual sport, achievements, "
+        "and goal - no generic filler, no placeholder brackets\n"
+        "- cold_call_script: a real, specific phone call opening and structure (2-3 sentences of what to "
+        "actually say when the person picks up, plus 1-2 follow-up talking points) - written for someone "
+        "who has never cold-called before, concrete and usable, not generic 'be confident' advice\n\n"
+        "Return ONLY valid JSON, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=700,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+ 
+ 
+def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_direction: str, clips_description: str) -> dict:
+    """Honest scope note: this does not edit or process any real video
+    file - there is no video hosting or editing infrastructure
+    connected anywhere in this stack. What this gives is a real,
+    specific EDIT PLAN grounded in the athlete's own description of
+    their actual raw footage - which clips to use, in what order,
+    how to trim them, and what to caption - for them to execute in
+    whatever video editor they already use.
+    """
+    direction_label = {
+        "play-college": "playing at the college level",
+        "go-pro": "going pro",
+        "coach": "coaching",
+        "sports-management": "a sports management career",
+    }.get(career_direction, career_direction)
+ 
+    prompt = (
+        f"A student-athlete: sport \"{sport}\", level {level}, career direction: {direction_label}.\n\n"
+        f"They described their available raw footage/clips as:\n\"{clips_description}\"\n\n"
+        "Give them a real, specific edit plan for turning this into a strong highlight reel - based ONLY "
+        "on the clips they actually described, not invented footage. If what they described is too thin "
+        "to make a strong reel, say so honestly rather than pretending it's enough.\n\n"
+        "Return a JSON object with exactly these three keys:\n"
+        "- edit_sequence: an array of objects, each with 'clip' (which described clip/moment this refers "
+        "to, by their own description) and 'instruction' (specific guidance: where to trim it, how long "
+        "to hold it, what to lead into next, and why it goes in this position)\n"
+        "- captions: an array of 2-4 short on-screen text suggestions tied to specific clips (e.g. a stat, "
+        "a title card idea) - concrete, not generic\n"
+        "- honest_assessment: 1-2 sentences on whether what they described is actually enough for a strong "
+        "reel, and if not, what specific kind of footage they're missing\n\n"
+        "Return ONLY valid JSON, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=900,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+ 
