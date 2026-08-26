@@ -85,6 +85,8 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
             first_action=m.get("first_action", ""),
             resource=m.get("resource", ""),
             risk=m.get("risk", ""),
+            if_it_works=m.get("if_it_works", ""),
+            if_it_stalls=m.get("if_it_stalls", ""),
             target_stage=m["stage"],
         ))
  
@@ -122,6 +124,8 @@ def get_roadmap(user_id: str, db: Session = Depends(get_db)):
                 "first_action": m.first_action,
                 "resource": m.resource,
                 "risk": m.risk,
+                "if_it_works": m.if_it_works,
+                "if_it_stalls": m.if_it_stalls,
                 "stage": m.target_stage,
                 "status": m.status,
             }
