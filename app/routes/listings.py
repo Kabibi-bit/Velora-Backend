@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-
+ 
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
-from app.services.matching import rank_listings, get_tag_weights_from_outcomes, compute_roadmap_alignment
-
+from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, compute_roadmap_alignment
+ 
 router = APIRouter(prefix="/listings", tags=["listings"])
-
-
+ 
+ 
 def _profile_to_dict(p: Profile) -> dict:
     return {
         "northstar": p.northstar,
@@ -19,8 +19,8 @@ def _profile_to_dict(p: Profile) -> dict:
         "target_types": p.target_types or [],
         "location_pref": p.location_pref or "",
     }
-
-
+ 
+ 
 def _listing_to_dict(l: Listing) -> dict:
     return {
         "id": str(l.id),
@@ -31,7 +31,7 @@ def _listing_to_dict(l: Listing) -> dict:
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
     }
-
+ 
 @router.get("/matches/{user_id}")
 def get_matches(user_id: str, db: Session = Depends(get_db)):
     """Returns the current top-ranked listings for a user, scored live
@@ -46,11 +46,11 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     )
     if not profile:
         raise HTTPException(status_code=404, detail="No current profile for this user")
-
+ 
     listings = db.query(Listing).all()
     if not listings:
         return {"matches": [], "note": "No listings in the database yet - run a scan first."}
-
+ 
     # Pull this user's real outcome history and let it adjust scores -
     # this is the actual "self-correcting" piece: a heuristic, not
     # machine learning, but grounded in real recorded results.
@@ -62,14 +62,14 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
         if listing:
             outcome_dicts.append({"tags": listing.tags or [], "status": o.status})
     tag_weights = get_tag_weights_from_outcomes(outcome_dicts)
-
-    ranked = rank_listings(
+ 
+    ranked, near_misses = rank_listings_with_near_misses(
         [_listing_to_dict(l) for l in listings],
         _profile_to_dict(profile),
         top_n=10,
         tag_weights=tag_weights,
     )
-
+ 
     milestones = (
         db.query(RoadmapMilestone)
         .filter(RoadmapMilestone.user_id == user_id)
@@ -79,10 +79,15 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
     for listing in ranked:
         listing["roadmap_alignment"] = compute_roadmap_alignment(listing, milestone_dicts)
-
-    return {"matches": ranked, "profile_id": str(profile.id), "outcomes_considered": len(outcome_dicts)}
-
-
+ 
+    return {
+        "matches": ranked,
+        "near_misses": near_misses,
+        "profile_id": str(profile.id),
+        "outcomes_considered": len(outcome_dicts),
+    }
+ 
+ 
 @router.post("/scan/{user_id}")
 async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     """Manually triggers an immediate scan: pulls fresh listings from
@@ -95,11 +100,11 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     import anthropic
     from app.services.scheduler import run_scan_for_user, _pull_and_store_new_listings
     from app.services.auto_apply import create_application_for_match, draft_outreach_for_match
-
+ 
     new_count = await _pull_and_store_new_listings(db)
     result = run_scan_for_user(db, user_id)
     result["new_listings_pulled"] = new_count
-
+ 
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -115,7 +120,7 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
             outcome = create_application_for_match(db, client, user_id, listing["id"], auto_generated=True)
             if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
                 auto_applied.append({"listing_id": listing["id"], "title": listing["title"], "confidence": outcome["composite_confidence"]})
-
+ 
             # Auto mode also drafts a referral outreach email for the
             # same eligible matches - queued in Workshop, never sent
             # automatically. This is what runs "while you're away":
@@ -126,10 +131,10 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
                 auto_drafted_outreach.append({"listing_id": listing["id"], "title": listing["title"], "to_address": outreach_result.get("to_address")})
     result["auto_applied"] = auto_applied
     result["auto_drafted_outreach"] = auto_drafted_outreach
-
+ 
     return result
-
-
+ 
+ 
 @router.get("/matches/{user_id}/explain/{listing_id}")
 def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_db)):
     """On-demand DEEP explanation of why a listing is a good match -
@@ -146,9 +151,9 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     import os
     import anthropic
     from app.models.db_models import RoadmapMilestone
-
+ 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
+ 
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -156,11 +161,11 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     )
     if not profile:
         raise HTTPException(status_code=404, detail="No current profile for this user")
-
+ 
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-
+ 
     milestones = (
         db.query(RoadmapMilestone)
         .filter(RoadmapMilestone.user_id == user_id)
@@ -170,7 +175,7 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     roadmap_line = ""
     if milestones:
         roadmap_line = "Their roadmap:\n" + "\n".join(f"{m.target_stage}. {m.title}" for m in milestones) + "\n\n"
-
+ 
     prompt = (
         f"A candidate's goal: \"{profile.northstar}\". What 'made it' looks like: \"{profile.final_idea or ''}\". "
         f"Their skills: \"{profile.skills or ''}\". What matters most to them: {', '.join(profile.priorities or [])}. "
@@ -191,8 +196,8 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     )
     explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
     return {"listing_id": listing_id, "listing_title": listing.title, "explanation": explanation}
-
-
+ 
+ 
 @router.get("/matches/{user_id}/connect/{listing_id}")
 def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends(get_db)):
     """Generates a real referral/networking strategy for a specific
@@ -206,9 +211,9 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
     """
     import os
     import anthropic
-
+ 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
+ 
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -216,11 +221,11 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
     )
     if not profile:
         raise HTTPException(status_code=404, detail="No current profile for this user")
-
+ 
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-
+ 
     prompt = (
         f"A candidate is applying to \"{listing.title}\" at {listing.org} ({listing.type}), "
         f"tags: {', '.join(listing.tags or [])}. Their background: skills \"{profile.skills or ''}\", "
@@ -245,13 +250,13 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
     )
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
+ 
     import json
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         raise HTTPException(status_code=502, detail="Could not generate a connection strategy just now - try again.")
-
+ 
     return {
         "listing_id": listing_id,
         "listing_title": listing.title,
@@ -260,8 +265,8 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
         "search_guidance": parsed.get("search_guidance", ""),
         "outreach_message": parsed.get("outreach_message", ""),
     }
-
-
+ 
+ 
 @router.get("/matches/{user_id}/connect/{listing_id}/guess-email")
 def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get_db)):
     """Returns a best-guess general contact address for the company -
@@ -271,22 +276,22 @@ def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get
     in place regardless of how the send flow is triggered.
     """
     from app.services.email_send import guess_contact_emails
-
+ 
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-
+ 
     guess = guess_contact_emails(listing.org)
     return {"listing_id": listing_id, "listing_org": listing.org, **guess}
-
-
+ 
+ 
 class SendOutreachIn(BaseModel):
     to_address: str
     subject: str
     body: str
     address_verified: bool = False
-
-
+ 
+ 
 @router.post("/matches/{user_id}/connect/{listing_id}/send-email")
 def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, db: Session = Depends(get_db)):
     """Actually sends a real email via Resend, and logs it. The
@@ -296,11 +301,11 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     """
     from app.services.email_send import send_email
     from app.models.db_models import OutreachEmail
-
+ 
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-
+ 
     status = "sent"
     error_detail = None
     try:
@@ -308,7 +313,7 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     except Exception as e:
         status = "failed"
         error_detail = str(e)
-
+ 
     log = OutreachEmail(
         user_id=user_id,
         listing_id=listing_id,
@@ -320,7 +325,8 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     )
     db.add(log)
     db.commit()
-
+ 
     if status == "failed":
         raise HTTPException(status_code=502, detail=f"Send failed: {error_detail}")
     return {"status": "sent", "to_address": payload.to_address}
+ 
