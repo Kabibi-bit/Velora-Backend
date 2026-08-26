@@ -1,4 +1,4 @@
-""SQLAlchemy models mirroring db/schema.sql.
+"""SQLAlchemy models mirroring db/schema.sql.
 Run schema.sql directly against Postgres for the pgvector setup;
 these models are for querying/inserting from the app layer.
 """
@@ -229,21 +229,25 @@ class OutreachEmail(Base):
  
  
 class SocialPost(Base):
-    """A personal progress journal entry, optionally tagged to a
-    roadmap stage. This used to be part of a cross-user social feed
-    with connections and comments - cut down deliberately, since a
-    feed needs real other users to have any value, and a connection
-    feature carries a real moderation/safety workload that isnt
-    worth taking on before theres anyone real to connect with.
+    """A private progress journal entry - generalized to work across
+    all 4 roles, not just candidates. tag_value/tag_label are generic
+    on purpose: for candidates and athletes they hold a real roadmap
+    stage number and title; for business they hold a hiring-pipeline
+    phase (sourcing/outreach/interviewing/closing/onboarding); for
+    tutors they hold a teaching phase (prep/session/followup/
+    curriculum). Never a fake roadmap forced onto a role that doesn't
+    have one - each role's frontend supplies whatever tagging is
+    actually real for it.
     """
     __tablename__ = "social_posts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     body = Column(Text, nullable=False)
     video_url = Column(String)
-    roadmap_stage = Column(Integer)
-    roadmap_stage_title = Column(String)
+    tag_value = Column(String)
+    tag_label = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+    edited_at = Column(DateTime, nullable=True)
  
  
 class AthleteEvent(Base):
