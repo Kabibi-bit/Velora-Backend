@@ -1,4 +1,4 @@
-"""SQLAlchemy models mirroring db/schema.sql.
+""SQLAlchemy models mirroring db/schema.sql.
 Run schema.sql directly against Postgres for the pgvector setup;
 these models are for querying/inserting from the app layer.
 """
