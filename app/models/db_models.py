@@ -98,6 +98,8 @@ class RoadmapMilestone(Base):
     first_action = Column(Text)
     resource = Column(Text)
     risk = Column(Text)
+    if_it_works = Column(Text)
+    if_it_stalls = Column(Text)
     target_stage = Column(Integer, nullable=False)
     status = Column(String, default="planned")
     created_at = Column(DateTime, default=datetime.utcnow)
