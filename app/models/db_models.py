@@ -227,6 +227,13 @@ class OutreachEmail(Base):
  
  
 class SocialPost(Base):
+    """A personal progress journal entry, optionally tagged to a
+    roadmap stage. This used to be part of a cross-user social feed
+    with connections and comments - cut down deliberately, since a
+    feed needs real other users to have any value, and a connection
+    feature carries a real moderation/safety workload that isn't
+    worth taking on before there's anyone real to connect with.
+    """
     __tablename__ = "social_posts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
@@ -237,20 +244,42 @@ class SocialPost(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
-class SocialComment(Base):
-    __tablename__ = "social_comments"
+class AthleteEvent(Base):
+    """A tracked deadline or trial opportunity for a student-athlete -
+    a tryout, camp, combine, or application deadline, optionally tied
+    to a specific roadmap stage.
+    """
+    __tablename__ = "athlete_events"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    post_id = Column(UUID(as_uuid=True), ForeignKey("social_posts.id", ondelete="CASCADE"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    body = Column(Text, nullable=False)
+    title = Column(String, nullable=False)
+    org = Column(String)
+    event_type = Column(String, nullable=False)  # tryout / camp / combine / application_deadline / other
+    event_date = Column(Date)
+    roadmap_stage = Column(Integer)
+    roadmap_stage_title = Column(String)
+    status = Column(String, nullable=False, default="upcoming")  # upcoming / attended / passed / missed
+    notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
-class SocialConnection(Base):
-    __tablename__ = "social_connections"
+class AthleteOutreach(Base):
+    """A draft/edit/send email + cold-call script for reaching a coach
+    or staff member. Separate from OutreachEmail since it isn't tied
+    to a real listing row - grounded in a free-text description of
+    who to reach instead.
+    """
+    __tablename__ = "athlete_outreach"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    target_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    status = Column(String, nullable=False, default="pending")  # pending / accepted / declined
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    target_description = Column(Text, nullable=False)
+    to_address = Column(String, nullable=False)
+    address_verified = Column(Boolean, nullable=False, default=False)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    cold_call_script = Column(Text)
+    roadmap_stage = Column(Integer)
+    roadmap_stage_title = Column(String)
+    status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     created_at = Column(DateTime, default=datetime.utcnow)
  
