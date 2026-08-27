@@ -8,7 +8,7 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy.orm import Session
 import anthropic
-
+ 
 from app.db import SessionLocal
 from app.models.db_models import User, Profile, Listing, MatchScore
 from app.services.ingestion import (
@@ -18,11 +18,11 @@ from app.services.ingestion import (
     fetch_athletic_career_jobs, normalize_athletic_job,
 )
 from app.services.matching import rank_listings
-
+ 
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "1440"))  # default: once/day
 anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-
+ 
+ 
 def _profile_to_dict(p: Profile) -> dict:
     return {
         "northstar": p.northstar,
@@ -33,8 +33,8 @@ def _profile_to_dict(p: Profile) -> dict:
         "target_types": p.target_types or [],
         "location_pref": p.location_pref or "",
     }
-
-
+ 
+ 
 def _listing_to_dict(l: Listing) -> dict:
     return {
         "id": str(l.id),
@@ -44,16 +44,17 @@ def _listing_to_dict(l: Listing) -> dict:
         "tags": l.tags or [],
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
+        "description": l.description or "",
     }
-
-
+ 
+ 
 async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
     """Fetches real listings from two sources - Adzuna for jobs (tagged
     via Claude) and SimplifyJobs for internships (tagged via free
     keyword matching, no AI cost) - and upserts anything new.
     """
     stored_count = 0
-
+ 
     # Source 1: Adzuna, for jobs
     raw_results = await fetch_adzuna(query)
     adzuna_normalized = dedupe_listings([normalize_adzuna(r) for r in raw_results])
@@ -73,7 +74,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             apply_url=item["apply_url"],
         ))
         stored_count += 1
-
+ 
     # Source 2: SimplifyJobs, for internships - free, no Claude call
     try:
         markdown_text = await fetch_simplify_internships()
@@ -95,7 +96,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             stored_count += 1
     except Exception as e:
         print(f"SimplifyJobs ingestion failed (non-fatal, Adzuna results still saved): {e}")
-
+ 
     # Source 3: ScholarshipAPI, for college/fellowship data - no-ops
     # automatically if SCHOLARSHIP_API_KEY isn't set, so this is safe
     # to leave in even before you have a key.
@@ -119,7 +120,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             stored_count += 1
     except Exception as e:
         print(f"ScholarshipAPI ingestion failed (non-fatal): {e}")
-
+ 
     # Source 4: Athletic-career jobs (coaching, athletic training, sports
     # management) - real data via the same Adzuna connection, just
     # queried with sports-specific terms. See ingestion.py for why this
@@ -147,11 +148,11 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             stored_count += 1
     except Exception as e:
         print(f"Athletic-career job ingestion failed (non-fatal): {e}")
-
+ 
     db.commit()
     return stored_count
-
-
+ 
+ 
 def run_scan_for_user(db: Session, user_id: str) -> dict:
     """Re-scores current listings for one user and stores the results.
     Used both by the daily scheduled job and the manual /listings/scan/{user_id} route.
@@ -163,14 +164,14 @@ def run_scan_for_user(db: Session, user_id: str) -> dict:
     )
     if not profile:
         return {"status": "no active profile", "user_id": user_id}
-
+ 
     listings = db.query(Listing).all()
     ranked = rank_listings(
         [_listing_to_dict(l) for l in listings],
         _profile_to_dict(profile),
         top_n=10,
     )
-
+ 
     # Determine this user's next scan_cycle number
     last_cycle = (
         db.query(MatchScore.scan_cycle)
@@ -179,7 +180,7 @@ def run_scan_for_user(db: Session, user_id: str) -> dict:
         .first()
     )
     next_cycle = (last_cycle[0] + 1) if last_cycle else 1
-
+ 
     for l in ranked:
         db.add(MatchScore(
             user_id=user_id,
@@ -192,10 +193,10 @@ def run_scan_for_user(db: Session, user_id: str) -> dict:
             scan_cycle=next_cycle,
         ))
     db.commit()
-
+ 
     return {"status": "scanned", "user_id": user_id, "matches": len(ranked), "cycle": next_cycle}
-
-
+ 
+ 
 def run_scan_for_all_users():
     """The actual daily job: pulls fresh listings once, then re-scores
     every user against the updated listings table. Also runs Auto
@@ -204,18 +205,18 @@ def run_scan_for_all_users():
     button: it fires even if nobody opens the app that day.
     """
     from app.services.auto_apply import create_application_for_match, draft_outreach_for_match
-
+ 
     db = SessionLocal()
     try:
         print(f"[{datetime.utcnow().isoformat()}] Starting daily scan...")
         new_count = asyncio.run(_pull_and_store_new_listings(db))
         print(f"Pulled {new_count} new listings.")
-
+ 
         users = db.query(User).join(Profile).filter(Profile.is_current == True).all()  # noqa: E712
         for user in users:
             result = run_scan_for_user(db, str(user.id))
             print(f"  {user.email}: {result}")
-
+ 
             profile = (
                 db.query(Profile)
                 .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
@@ -230,7 +231,7 @@ def run_scan_for_all_users():
                     outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
                     if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
                         auto_count += 1
-
+ 
                     # Auto mode drafts outreach for the same eligible
                     # matches while the user is away - queued in
                     # Workshop, status stays 'drafted' until the user
@@ -245,10 +246,11 @@ def run_scan_for_all_users():
         print(f"Scan failed: {e}")
     finally:
         db.close()
-
-
+ 
+ 
 def start_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES)
     scheduler.start()
     return scheduler
+ 
