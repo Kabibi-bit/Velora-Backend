@@ -36,7 +36,11 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
     if not listings:
         return []
     listing_dicts = [
-        {"id": str(l.id), "type": l.type, "title": l.title, "org": l.org, "tags": l.tags or []}
+        {
+            "id": str(l.id), "type": l.type, "title": l.title, "org": l.org, "tags": l.tags or [],
+            "location": l.location, "deadline": l.deadline.isoformat() if l.deadline else None,
+            "description": l.description or "",
+        }
         for l in listings
     ]
     ranked = rank_listings(listing_dicts, profile_dict, top_n=8)
