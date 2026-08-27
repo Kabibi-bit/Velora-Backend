@@ -10,6 +10,15 @@ router = APIRouter(prefix="/listings", tags=["listings"])
  
  
 def _profile_to_dict(p: Profile) -> dict:
+    """The profile's embedding is computed fresh here rather than
+    stored - profile goal text changes far less often than listings
+    get scanned, and computing it on-demand means it's never stale,
+    unlike a cached value that would need invalidating on every
+    profile edit. Degrades to None (no semantic factor) automatically
+    if VOYAGE_API_KEY isn't configured - see app/services/embeddings.py.
+    """
+    from app.services.embeddings import generate_embedding
+    goal_text = f"{p.northstar or ''}. {p.final_idea or ''}. Skills: {p.skills or ''}"
     return {
         "northstar": p.northstar,
         "final_idea": p.final_idea or "",
@@ -18,6 +27,7 @@ def _profile_to_dict(p: Profile) -> dict:
         "priorities": p.priorities or [],
         "target_types": p.target_types or [],
         "location_pref": p.location_pref or "",
+        "embedding": generate_embedding(goal_text, input_type="query"),
     }
  
  
@@ -31,6 +41,7 @@ def _listing_to_dict(l: Listing) -> dict:
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
         "description": l.description or "",
+        "embedding": list(l.embedding) if l.embedding is not None else None,
     }
  
 @router.get("/matches/{user_id}")
@@ -61,7 +72,7 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     for o in outcome_rows:
         listing = listings_by_id.get(str(o.listing_id))
         if listing:
-            outcome_dicts.append({"tags": listing.tags or [], "status": o.status})
+            outcome_dicts.append({"tags": listing.tags or [], "status": o.status, "updated_at": o.updated_at})
     tag_weights = get_tag_weights_from_outcomes(outcome_dicts)
  
     ranked, near_misses = rank_listings_with_near_misses(
