@@ -11,4 +11,5 @@ apscheduler
 email-validator
 bcrypt
 PyJWT
+voyageai
  
