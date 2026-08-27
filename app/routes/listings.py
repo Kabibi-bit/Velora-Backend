@@ -30,6 +30,7 @@ def _listing_to_dict(l: Listing) -> dict:
         "tags": l.tags or [],
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
+        "description": l.description or "",
     }
  
 @router.get("/matches/{user_id}")
@@ -176,6 +177,10 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     if milestones:
         roadmap_line = "Their roadmap:\n" + "\n".join(f"{m.target_stage}. {m.title}" for m in milestones) + "\n\n"
  
+    description_line = ""
+    if listing.description:
+        description_line = f"The actual posting text (not just its extracted tags): \"{listing.description[:1500]}\"\n\n"
+ 
     prompt = (
         f"A candidate's goal: \"{profile.northstar}\". What 'made it' looks like: \"{profile.final_idea or ''}\". "
         f"Their skills: \"{profile.skills or ''}\". What matters most to them: {', '.join(profile.priorities or [])}. "
@@ -183,9 +188,11 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
         f"{roadmap_line}"
         f"A listing they're considering: \"{listing.title}\" at {listing.org} ({listing.type}), "
         f"location {listing.location or 'unspecified'}, tags: {', '.join(listing.tags or [])}.\n\n"
+        f"{description_line}"
         "Write a genuine, specific 3-4 sentence case for why this is or isn't a strong match for "
         "THIS candidate specifically - reference their actual goal, skills, priorities, and roadmap "
-        "by name where relevant. Be honest about weak fit if it's weak, don't oversell. No generic "
+        f"by name where relevant.{' If the actual posting text above reveals something the tags alone would have missed - a specific requirement, a seniority signal, team context - point that out specifically.' if listing.description else ''} "
+        "Be honest about weak fit if it's weak, don't oversell. No generic "
         "filler like 'this could be a great opportunity' - every sentence should reference a specific "
         "fact about the candidate or the listing."
     )
