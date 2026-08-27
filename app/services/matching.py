@@ -1,13 +1,71 @@
 """Matching engine: scores listings against a user's profile.
-This is a direct port of the logic prototyped in the frontend demo,
-now living server-side so it can run on a schedule against real data.
+ 
+Every factor that shows up in the explanation is a real input to the
+score itself - deadline urgency and location fit used to be mentioned
+in the rationale text but never actually affected the number, which
+is exactly the kind of inconsistency that makes a score feel
+untrustworthy even when the prose sounds reasonable. Fixed here: the
+score is now a transparent, structured composite of six named
+factors, each independently inspectable - not a black-box percentage
+with a plausible-sounding paragraph bolted on afterward.
 """
 import re
+from datetime import date
 from typing import Optional
+ 
+# Honestly scoped: a curated set of common, well-known synonyms in
+# tech/career contexts - not a claim of real NLP or embeddings. Pure
+# substring matching (the previous approach) misses obvious pairs
+# like "js" vs "javascript" or "ml" vs "machine learning"; this closes
+# the most common gaps without pretending to be exhaustive.
+SYNONYM_GROUPS = [
+    {"js", "javascript", "typescript", "ts"},
+    {"ml", "machinelearning", "ai", "artificialintelligence"},
+    {"sql", "database", "databases", "postgres", "postgresql", "mysql"},
+    {"ux", "ui", "design", "uxdesign", "uidesign"},
+    {"pm", "productmanagement", "product"},
+    {"frontend", "front-end", "front"},
+    {"backend", "back-end", "back"},
+    {"fullstack", "full-stack"},
+    {"analytics", "analysis", "dataanalysis", "data"},
+    {"devops", "infrastructure", "infra"},
+    {"marketing", "growth"},
+    {"finance", "financial"},
+    {"bio", "biology", "biotech"},
+]
+_SYNONYM_LOOKUP: dict[str, set[str]] = {}
+for _group in SYNONYM_GROUPS:
+    for _term in _group:
+        _SYNONYM_LOOKUP[_term] = _group
  
  
 def tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z][a-z\-]{2,}", text.lower())
+    """The general 3-char minimum avoids polluting matches with noise
+    words (of, to, in, is, at...), but that same minimum was silently
+    dropping short, meaningful abbreviations this app's synonym system
+    depends on (js, ai, ux, ui, pm, ml, ts) - so those are extracted
+    separately as whole words rather than lowering the general
+    minimum and reintroducing noise-word pollution.
+    """
+    tokens = re.findall(r"[a-z][a-z\-]{2,}", text.lower())
+    short_terms = {t for group in SYNONYM_GROUPS for t in group if len(t) <= 2}
+    if short_terms:
+        text_lower = text.lower()
+        for term in short_terms:
+            if re.search(rf"\b{re.escape(term)}\b", text_lower):
+                tokens.append(term)
+    return tokens
+ 
+ 
+def _terms_match(a: str, b: str) -> bool:
+    """True if two terms are the same, one contains the other, or
+    they belong to the same curated synonym group.
+    """
+    if a in b or b in a:
+        return True
+    a_clean, b_clean = a.replace("-", ""), b.replace("-", "")
+    group_a = _SYNONYM_LOOKUP.get(a_clean)
+    return bool(group_a and b_clean in group_a)
  
  
 def filter_dealbreakers(listings: list[dict], dealbreakers: str) -> list[dict]:
@@ -17,8 +75,56 @@ def filter_dealbreakers(listings: list[dict], dealbreakers: str) -> list[dict]:
     return [l for l in listings if not any(tag in db_tokens for tag in l["tags"])]
  
  
+def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
+    """Returns (score_contribution, days_left). A deadline that's
+    close but not unrealistically close gets a small real boost -
+    genuinely actionable urgency, not panic-inducing. Too far out or
+    already passed contributes nothing.
+    """
+    if not listing.get("deadline"):
+        return 0.0, None
+    try:
+        deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
+    except (ValueError, TypeError):
+        return 0.0, None
+    days_left = (deadline_date - date.today()).days
+    if days_left < 0:
+        return 0.0, days_left
+    if days_left <= 3:
+        return 0.5, days_left  # very soon - real but small nudge, not a huge score swing for something you might not reach in time
+    if days_left <= 14:
+        return 1.5, days_left  # the genuinely actionable window
+    if days_left <= 30:
+        return 0.5, days_left
+    return 0.0, days_left
+ 
+ 
+def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | None]:
+    """Returns (score_contribution, reason). Mirrors what the
+    explanation already claimed to consider - remote-preference match,
+    flexibility priority, and a real location-token overlap - now
+    actually feeding the score instead of only appearing in prose.
+    """
+    listing_loc = (listing.get("location") or "").lower()
+    location_pref = (profile.get("location_pref") or "").lower()
+    priorities = profile.get("priorities", [])
+ 
+    if "flexibility" in priorities and "remote" in listing_loc:
+        return 1.5, "remote, matching your stated need for flexibility"
+    if location_pref and listing_loc:
+        if "remote" in location_pref and "remote" in listing_loc:
+            return 1.5, "matches your remote location preference"
+        pref_tokens = [t for t in tokenize(location_pref) if len(t) > 3]
+        if any(t in listing_loc for t in pref_tokens):
+            return 1.0, f"based in {listing.get('location')}, inside your stated location preference"
+    return 0.0, None
+ 
+ 
 def score_listing(listing: dict, profile: dict) -> Optional[dict]:
-    """Returns None if the listing is excluded by a dealbreaker, else a score dict."""
+    """Returns None if the listing is excluded by a dealbreaker, else a
+    structured score dict with a top-level score_pct plus every named
+    factor that contributed to it, independently inspectable.
+    """
     dealbreakers = (profile.get("dealbreakers") or "").lower()
     if any(tag in dealbreakers for tag in listing["tags"]):
         return None
@@ -27,39 +133,55 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
     skill_tokens = tokenize(profile.get("skills", ""))
     priorities = profile.get("priorities", [])
  
-    score = 0.0
+    goal_fit, skill_fit = 0.0, 0.0
     matched_goal, matched_skill = [], []
     for tag in listing["tags"]:
-        in_goal = any(t in tag or tag in t for t in goal_tokens)
-        in_skill = any(t in tag or tag in t for t in skill_tokens)
+        in_goal = any(_terms_match(t, tag) for t in goal_tokens)
+        in_skill = any(_terms_match(t, tag) for t in skill_tokens)
         if in_goal:
-            score += 3
+            goal_fit += 3
             matched_goal.append(tag)
         if in_skill:
-            score += 2
+            skill_fit += 2
             matched_skill.append(tag)
  
+    priority_fit = 0.0
     if "learning" in priorities and listing["type"] in ("internship", "college"):
-        score += 1.5
+        priority_fit += 1.5
     if "pay" in priorities and listing["type"] == "job":
-        score += 1.5
+        priority_fit += 1.5
  
-    pct = max(35, min(97, round((score / (len(listing["tags"]) * 3 + 2)) * 100)))
+    location_fit, location_reason = _location_fit_factor(listing, profile)
+    deadline_urgency, days_left = _deadline_urgency_factor(listing)
+ 
+    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency
+    denom = len(listing["tags"]) * 3 + 2 + 1.5  # +1.5 headroom for the location/deadline factors on top of the original tag-based ceiling
+    pct = max(35, min(97, round((raw_total / denom) * 100)))
+ 
     return {
         "score_pct": pct,
         "goal_match_tags": list(set(matched_goal)),
         "skill_match_tags": list(set(matched_skill)),
+        "factors": {
+            "goal_fit": round(goal_fit, 2),
+            "skill_fit": round(skill_fit, 2),
+            "priority_fit": round(priority_fit, 2),
+            "location_fit": round(location_fit, 2),
+            "location_reason": location_reason,
+            "deadline_urgency": round(deadline_urgency, 2),
+            "days_left": days_left,
+        },
     }
  
  
 def explain_score(listing: dict, match: dict, profile: dict) -> str:
-    """Builds a real, multi-clause explanation from every signal
-    already available - not just goal/skill tag overlap. Still free
-    and instant (no AI call), but covers priorities, location fit,
-    and deadline urgency, so it reads like an actual case for the
-    listing rather than a one-line template.
+    """Builds a real, multi-clause explanation directly from the same
+    structured factors the score itself was computed from - the
+    explanation and the number can no longer disagree, because they
+    now share one source of truth.
     """
     goal_phrase = (profile["northstar"].split(".")[0] or "your goal").strip().lower()
+    factors = match["factors"]
     clauses = []
  
     if match["goal_match_tags"]:
@@ -72,29 +194,13 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         clauses.append("is a full-time role, aligned with pay being a top priority for you")
     if "learning" in priorities and listing["type"] in ("internship", "college"):
         clauses.append("is structured around hands-on learning, which you said matters most right now")
-    listing_loc = (listing.get("location") or "").lower()
-    if "flexibility" in priorities and "remote" in listing_loc:
-        clauses.append("is remote, matching your stated need for flexibility")
- 
-    location_pref = (profile.get("location_pref") or "").lower()
-    if location_pref and listing_loc:
-        if "remote" in location_pref and "remote" in listing_loc:
-            clauses.append("matches your remote location preference")
-        else:
-            pref_tokens = [t for t in tokenize(location_pref) if len(t) > 3]
-            if any(t in listing_loc for t in pref_tokens):
-                clauses.append(f"is based in {listing['location']}, inside your stated location preference")
+    if factors.get("location_reason"):
+        clauses.append(f"is {factors['location_reason']}")
  
     deadline_note = ""
-    if listing.get("deadline"):
-        try:
-            from datetime import date
-            deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
-            days_left = (deadline_date - date.today()).days
-            if 0 <= days_left <= 14:
-                deadline_note = f" It also closes in {days_left} day{'s' if days_left != 1 else ''}, so it's worth acting on soon if you're interested."
-        except (ValueError, TypeError):
-            pass
+    days_left = factors.get("days_left")
+    if days_left is not None and 0 <= days_left <= 14:
+        deadline_note = f" It also closes in {days_left} day{'s' if days_left != 1 else ''}, so it's worth acting on soon if you're interested."
  
     if not clauses:
         return "Looser fit - no strong overlap with your stated goal, skills, or priorities yet, but worth a glance while broadening this cycle's search." + deadline_note
@@ -110,16 +216,29 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
  
  
 def get_tag_weights_from_outcomes(db_outcomes: list[dict]) -> dict:
-    """Builds a simple per-tag weight adjustment from real outcome history.
-    This is a heuristic, not machine learning: tags present in listings
-    that led to interviews/offers get boosted; tags from rejections/ghosts
-    get slightly penalized. db_outcomes: [{"tags": [...], "status": "..."}]
+    """Builds a per-tag weight adjustment from real outcome history,
+    with confidence-weighted shrinkage: a tag with only 1-2 logged
+    outcomes gets a heavily dampened adjustment (one rejection
+    shouldn't swing future scoring as much as ten would), while a tag
+    with a real sample size gets closer to its full raw signal. This
+    is a simple, explainable statistical correction, not a claim of
+    real machine learning.
+    db_outcomes: [{"tags": [...], "status": "..."}]
     """
-    weights = {}
+    raw_deltas: dict[str, list[float]] = {}
     for o in db_outcomes:
         delta = {"interview": 1.5, "offer": 2.5, "applied": 0, "rejected": -1.0, "ghosted": -0.5}.get(o["status"], 0)
         for tag in o.get("tags", []):
-            weights[tag] = weights.get(tag, 0) + delta
+            raw_deltas.setdefault(tag, []).append(delta)
+ 
+    weights = {}
+    for tag, deltas in raw_deltas.items():
+        n = len(deltas)
+        avg = sum(deltas) / n
+        # Shrinkage factor: approaches 1.0 as n grows, stays small for n=1-2.
+        # n=1 -> 0.33, n=3 -> 0.6, n=5 -> 0.71, n=10 -> 0.83
+        confidence = n / (n + 2)
+        weights[tag] = round(avg * confidence, 4)
     return weights
  
  
@@ -132,7 +251,6 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
         match = score_listing(listing, profile)
         if match is None:
             continue
-        # Apply the outcome-based adjustment on top of the base score.
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
         match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
         match["rationale"] = explain_score(listing, match, profile)
