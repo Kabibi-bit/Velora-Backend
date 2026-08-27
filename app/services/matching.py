@@ -120,6 +120,34 @@ def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | Non
     return 0.0, None
  
  
+def _description_overlap_factor(listing: dict, goal_tokens: list[str], skill_tokens: list[str], matched_tag_terms: set[str]) -> tuple[float, list[str]]:
+    """Real signal from the actual job description text, not just the
+    6-10 tags an earlier ingestion step compressed it down to. Tag
+    extraction is inherently lossy - a specific requirement mentioned
+    once in a long posting can easily not survive being reduced to a
+    handful of tags. This scans the real description for goal/skill
+    terms that AREN'T already accounted for by a tag match, catching
+    real signal the compression step lost - without needing a paid AI
+    call for every listing in every scan.
+    """
+    description = (listing.get("description") or "").lower()
+    if not description:
+        return 0.0, []
+    desc_tokens = set(tokenize(description))
+    found = []
+    for term in set(goal_tokens) | set(skill_tokens):
+        term_clean = term.replace("-", "")
+        if term_clean in matched_tag_terms:
+            continue  # already credited via a tag match - avoid double-counting the same signal
+        if term in desc_tokens or any(_terms_match(term, d) for d in desc_tokens):
+            found.append(term)
+    # Capped and weighted lower than a real tag match - this is
+    # supplementary signal from a noisier source (free text vs a
+    # curated tag), not a replacement for it.
+    contribution = min(2.0, len(found) * 0.4)
+    return contribution, found[:5]
+ 
+ 
 def score_listing(listing: dict, profile: dict) -> Optional[dict]:
     """Returns None if the listing is excluded by a dealbreaker, else a
     structured score dict with a top-level score_pct plus every named
@@ -135,15 +163,18 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
  
     goal_fit, skill_fit = 0.0, 0.0
     matched_goal, matched_skill = [], []
+    matched_tag_terms = set()
     for tag in listing["tags"]:
         in_goal = any(_terms_match(t, tag) for t in goal_tokens)
         in_skill = any(_terms_match(t, tag) for t in skill_tokens)
         if in_goal:
             goal_fit += 3
             matched_goal.append(tag)
+            matched_tag_terms.add(tag.replace("-", ""))
         if in_skill:
             skill_fit += 2
             matched_skill.append(tag)
+            matched_tag_terms.add(tag.replace("-", ""))
  
     priority_fit = 0.0
     if "learning" in priorities and listing["type"] in ("internship", "college"):
@@ -153,9 +184,15 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
  
     location_fit, location_reason = _location_fit_factor(listing, profile)
     deadline_urgency, days_left = _deadline_urgency_factor(listing)
+    description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
  
-    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency
-    denom = len(listing["tags"]) * 3 + 2 + 1.5  # +1.5 headroom for the location/deadline factors on top of the original tag-based ceiling
+    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit
+    # Headroom for description_fit only applies when there's actually
+    # description text to score against - otherwise a listing with no
+    # description data (true for every demo/mock listing) would be
+    # unfairly diluted by a ceiling for a signal it can never produce.
+    description_headroom = 2.0 if listing.get("description") else 0.0
+    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
     return {
@@ -170,6 +207,8 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
             "location_reason": location_reason,
             "deadline_urgency": round(deadline_urgency, 2),
             "days_left": days_left,
+            "description_fit": round(description_fit, 2),
+            "description_terms": description_terms,
         },
     }
  
@@ -188,6 +227,8 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         clauses.append(f"directly touches {', '.join(match['goal_match_tags'][:2])} from your stated goal of {goal_phrase}")
     if match["skill_match_tags"]:
         clauses.append(f"draws on your existing experience with {', '.join(match['skill_match_tags'][:2])}")
+    if factors.get("description_terms"):
+        clauses.append(f"also mentions {', '.join(factors['description_terms'][:2])} in the actual posting text, beyond what's captured in its tags")
  
     priorities = profile.get("priorities", [])
     if "pay" in priorities and listing["type"] == "job":
