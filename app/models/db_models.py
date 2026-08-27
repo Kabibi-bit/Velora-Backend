@@ -11,6 +11,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
+from pgvector.sqlalchemy import Vector
  
 Base = declarative_base()
  
@@ -62,6 +63,7 @@ class Listing(Base):
     deadline = Column(Date)
     apply_url = Column(String, nullable=False)
     fetched_at = Column(DateTime, default=datetime.utcnow)
+    embedding = Column(Vector(512), nullable=True)  # None until embedded - see app/services/embeddings.py
  
  
 class MatchScore(Base):
