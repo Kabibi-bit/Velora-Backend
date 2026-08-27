@@ -18,12 +18,15 @@ from app.services.ingestion import (
     fetch_athletic_career_jobs, normalize_athletic_job,
 )
 from app.services.matching import rank_listings
+from app.services.embeddings import generate_embedding
  
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "1440"))  # default: once/day
 anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 def _profile_to_dict(p: Profile) -> dict:
+    from app.services.embeddings import generate_embedding
+    goal_text = f"{p.northstar or ''}. {p.final_idea or ''}. Skills: {p.skills or ''}"
     return {
         "northstar": p.northstar,
         "final_idea": p.final_idea or "",
@@ -32,6 +35,7 @@ def _profile_to_dict(p: Profile) -> dict:
         "priorities": p.priorities or [],
         "target_types": p.target_types or [],
         "location_pref": p.location_pref or "",
+        "embedding": generate_embedding(goal_text, input_type="query"),
     }
  
  
@@ -45,7 +49,20 @@ def _listing_to_dict(l: Listing) -> dict:
         "location": l.location,
         "deadline": l.deadline.isoformat() if l.deadline else None,
         "description": l.description or "",
+        "embedding": list(l.embedding) if l.embedding is not None else None,
     }
+ 
+ 
+def _embed_listing(title: str, description: str, tags: list[str]) -> list[float] | None:
+    """Embedded once at ingestion time and cached in the DB - unlike
+    the profile embedding (computed fresh per request, since goal text
+    changes rarely), re-embedding every listing on every match request
+    would be wasteful at scale. Returns None automatically if
+    VOYAGE_API_KEY isn't configured - ingestion proceeds exactly as it
+    did before this existed, just without the semantic factor.
+    """
+    text = f"{title}. {description}. Tags: {', '.join(tags or [])}"
+    return generate_embedding(text, input_type="document")
  
  
 async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
@@ -72,6 +89,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
             org=item["org"], type=item["type"], location=item["location"],
             description=item["description"], tags=tags, deadline=item["deadline"],
             apply_url=item["apply_url"],
+            embedding=_embed_listing(item["title"], item["description"], tags),
         ))
         stored_count += 1
  
@@ -92,6 +110,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
                 org=item["org"], type=item["type"], location=item["location"],
                 description=item["description"], tags=item["tags"], deadline=item["deadline"],
                 apply_url=item["apply_url"],
+                embedding=_embed_listing(item["title"], item["description"], item["tags"]),
             ))
             stored_count += 1
     except Exception as e:
@@ -116,6 +135,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
                 org=item["org"], type=item["type"], location=item["location"],
                 description=item["description"], tags=item["tags"], deadline=item["deadline"],
                 apply_url=item["apply_url"],
+                embedding=_embed_listing(item["title"], item["description"], item["tags"]),
             ))
             stored_count += 1
     except Exception as e:
@@ -144,6 +164,7 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
                 org=item["org"], type=item["type"], location=item["location"],
                 description=item["description"], tags=tags, deadline=item["deadline"],
                 apply_url=item["apply_url"],
+                embedding=_embed_listing(item["title"], item["description"], tags),
             ))
             stored_count += 1
     except Exception as e:
