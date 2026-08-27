@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -6,43 +7,50 @@ from sqlalchemy import desc
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import SocialPost, Profile, RoadmapSummary
-from app.services.social import reflect_on_journal_entry
+from app.models.db_models import SocialPost
+from app.services.social import reflect_on_journal_entry, reflect_on_entry_pattern
  
 router = APIRouter(prefix="/social", tags=["social"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
- 
- 
-def _current_profile(db: Session, user_id: str) -> Profile | None:
-    return (
-        db.query(Profile)
-        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
-        .first()
-    )
  
  
 class PostIn(BaseModel):
     user_id: str
     body: str
     video_url: str | None = None
-    roadmap_stage: int | None = None
-    roadmap_stage_title: str | None = None
+    tag_value: str | None = None
+    tag_label: str | None = None
  
  
 @router.post("/posts")
 def create_post(payload: PostIn, db: Session = Depends(get_db)):
     """Adds an entry to the user's own private progress journal.
-    video_url is a link to wherever the person already hosts their
-    video (YouTube, Loom, etc.) - no upload/hosting is done here.
+    Works the same way for all 4 roles - tag_value/tag_label are
+    generic (a roadmap stage for candidate/athlete, a hiring-pipeline
+    phase for business, a teaching phase for tutor). video_url is a
+    link to wherever the person already hosts their video (YouTube,
+    Loom, etc.) - no upload/hosting is done here.
     """
     post = SocialPost(
         user_id=payload.user_id, body=payload.body, video_url=payload.video_url,
-        roadmap_stage=payload.roadmap_stage, roadmap_stage_title=payload.roadmap_stage_title,
+        tag_value=payload.tag_value, tag_label=payload.tag_label,
     )
     db.add(post)
     db.commit()
     db.refresh(post)
     return {"post_id": str(post.id), "status": "created"}
+ 
+ 
+def _serialize_post(p: SocialPost) -> dict:
+    return {
+        "post_id": str(p.id),
+        "body": p.body,
+        "video_url": p.video_url,
+        "tag_value": p.tag_value,
+        "tag_label": p.tag_label,
+        "created_at": p.created_at.isoformat(),
+        "edited_at": p.edited_at.isoformat() if p.edited_at else None,
+    }
  
  
 @router.get("/posts/{user_id}")
@@ -58,37 +66,77 @@ def list_journal(user_id: str, db: Session = Depends(get_db)):
         .limit(100)
         .all()
     )
-    return [
-        {
-            "post_id": str(p.id),
-            "body": p.body,
-            "video_url": p.video_url,
-            "roadmap_stage": p.roadmap_stage,
-            "roadmap_stage_title": p.roadmap_stage_title,
-            "created_at": p.created_at.isoformat(),
-        }
-        for p in rows
-    ]
+    return [_serialize_post(p) for p in rows]
  
  
-@router.get("/posts/{post_id}/reflect/{user_id}")
-def reflect_on_post(post_id: str, user_id: str, db: Session = Depends(get_db)):
-    """An honest, specific AI reflection on the user's own journal
-    entry, grounded in their real goal and roadmap.
-    """
-    viewer_profile = _current_profile(db, user_id)
-    if not viewer_profile:
-        raise HTTPException(status_code=404, detail="No current profile for this user")
-    post = db.query(SocialPost).filter(SocialPost.id == post_id, SocialPost.user_id == user_id).first()
+class EditPostIn(BaseModel):
+    body: str
+ 
+ 
+@router.patch("/posts/{post_id}")
+def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db)):
+    post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
+    post.body = payload.body
+    post.edited_at = datetime.utcnow()
+    db.commit()
+    return {"status": "updated"}
  
-    roadmap_summary_row = db.query(RoadmapSummary).filter(RoadmapSummary.user_id == user_id).first()
-    profile_dict = {"northstar": viewer_profile.northstar, "skills": viewer_profile.skills or ""}
-    reflection = reflect_on_journal_entry(
-        client, profile_dict,
-        roadmap_summary_row.summary if roadmap_summary_row else None,
-        post.body, post.roadmap_stage_title,
-    )
+ 
+@router.delete("/posts/{post_id}")
+def delete_post(post_id: str, db: Session = Depends(get_db)):
+    post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+    db.delete(post)
+    db.commit()
+    return {"status": "deleted"}
+ 
+ 
+class ReflectIn(BaseModel):
+    focus: str
+    context_summary: str | None = None
+ 
+ 
+@router.post("/posts/{post_id}/reflect")
+def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_db)):
+    """An honest, specific AI reflection on ONE journal entry. Takes
+    focus/context_summary directly in the request rather than looking
+    up a stored profile, since only candidates have a Profile table -
+    athlete/business/tutor context has stayed frontend-only so far,
+    the same honest gap as the rest of those roles' features.
+    """
+    post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+    reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
     return {"post_id": post_id, "reflection": reflection}
+ 
+ 
+class ReflectPatternIn(BaseModel):
+    focus: str
+    context_summary: str | None = None
+    limit: int = 5
+ 
+ 
+@router.post("/posts/{user_id}/reflect-pattern")
+def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depends(get_db)):
+    """The genuinely more valuable reflection - looks across the
+    user's last several entries together for a real pattern, instead
+    of restating one entry back at them.
+    """
+    rows = (
+        db.query(SocialPost)
+        .filter(SocialPost.user_id == user_id)
+        .order_by(desc(SocialPost.created_at))
+        .limit(max(1, min(payload.limit, 20)))
+        .all()
+    )
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="Not enough entries yet for a pattern reflection - log a few more first")
+ 
+    entries = [{"body": p.body, "tag_label": p.tag_label} for p in rows]
+    reflection = reflect_on_entry_pattern(client, payload.focus, payload.context_summary, entries)
+    return {"reflection": reflection, "entries_considered": len(entries)}
  
