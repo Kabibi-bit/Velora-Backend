@@ -10,8 +10,9 @@ factors, each independently inspectable - not a black-box percentage
 with a plausible-sounding paragraph bolted on afterward.
 """
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
+from app.services.embeddings import semantic_similarity_factor
  
 # Honestly scoped: a curated set of common, well-known synonyms in
 # tech/career contexts - not a claim of real NLP or embeddings. Pure
@@ -185,20 +186,39 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
     location_fit, location_reason = _location_fit_factor(listing, profile)
     deadline_urgency, days_left = _deadline_urgency_factor(listing)
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
+    semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"))
  
-    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit
-    # Headroom for description_fit only applies when there's actually
-    # description text to score against - otherwise a listing with no
-    # description data (true for every demo/mock listing) would be
-    # unfairly diluted by a ceiling for a signal it can never produce.
+    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit + semantic_fit
+    # Headroom only applies for factors that actually had real data to
+    # work with - a listing/profile pair with no embeddings (true
+    # whenever Voyage isn't configured, or for every demo/mock
+    # listing) shouldn't have its ceiling diluted by headroom for a
+    # signal it could never produce. Same principle already applied
+    # to description_fit.
     description_headroom = 2.0 if listing.get("description") else 0.0
-    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom
+    semantic_headroom = 4.0 if (listing.get("embedding") is not None and profile.get("embedding") is not None) else 0.0
+    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom + semantic_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
+ 
+    # How many INDEPENDENT signals actually agree, not just the
+    # magnitude of the total - two listings can land on the same
+    # score_pct while one rests on four factors agreeing and the
+    # other rests on a single strong tag match. That distinction is
+    # real information the percentage alone can't carry.
+    factors_engaged = sum(1 for v in (goal_fit, skill_fit, priority_fit, location_fit, deadline_urgency, description_fit, semantic_fit) if v > 0)
+    if factors_engaged <= 1:
+        signal_strength = "low"
+    elif factors_engaged <= 3:
+        signal_strength = "moderate"
+    else:
+        signal_strength = "high"
  
     return {
         "score_pct": pct,
         "goal_match_tags": list(set(matched_goal)),
         "skill_match_tags": list(set(matched_skill)),
+        "signal_strength": signal_strength,
+        "factors_engaged": factors_engaged,
         "factors": {
             "goal_fit": round(goal_fit, 2),
             "skill_fit": round(skill_fit, 2),
@@ -209,6 +229,7 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
             "days_left": days_left,
             "description_fit": round(description_fit, 2),
             "description_terms": description_terms,
+            "semantic_fit": semantic_fit,
         },
     }
  
@@ -229,6 +250,8 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         clauses.append(f"draws on your existing experience with {', '.join(match['skill_match_tags'][:2])}")
     if factors.get("description_terms"):
         clauses.append(f"also mentions {', '.join(factors['description_terms'][:2])} in the actual posting text, beyond what's captured in its tags")
+    if factors.get("semantic_fit", 0) >= 2.0:
+        clauses.append("is a strong conceptual match for what you're going for, even beyond the specific words in its listing")
  
     priorities = profile.get("priorities", [])
     if "pay" in priorities and listing["type"] == "job":
@@ -256,21 +279,51 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
     return f"This {joined}.{deadline_note}"
  
  
-def get_tag_weights_from_outcomes(db_outcomes: list[dict]) -> dict:
-    """Builds a per-tag weight adjustment from real outcome history,
-    with confidence-weighted shrinkage: a tag with only 1-2 logged
-    outcomes gets a heavily dampened adjustment (one rejection
-    shouldn't swing future scoring as much as ten would), while a tag
-    with a real sample size gets closer to its full raw signal. This
-    is a simple, explainable statistical correction, not a claim of
-    real machine learning.
-    db_outcomes: [{"tags": [...], "status": "..."}]
+def _recency_decay(days_old: float, half_life_days: float = 90.0) -> float:
+    """Exponential decay: an outcome loses half its weight every
+    half_life_days. At 90 days, a rejection is worth half of what it
+    was on day 1 - your skills, market, and application quality all
+    genuinely change over months, so a stale outcome shouldn't hold a
+    current score hostage as tightly as a fresh one.
     """
+    if days_old < 0:
+        days_old = 0
+    return 0.5 ** (days_old / half_life_days)
+ 
+ 
+def get_tag_weights_from_outcomes(db_outcomes: list[dict], as_of: "date | None" = None) -> dict:
+    """Builds a per-tag weight adjustment from real outcome history,
+    with two real corrections on top of the raw signal:
+ 
+    1. Confidence-weighted shrinkage: a tag with only 1-2 logged
+       outcomes gets a heavily dampened adjustment (one rejection
+       shouldn't swing future scoring as much as ten would).
+    2. Recency decay: an outcome from 6 months ago carries less
+       weight than one from last week, since the underlying signal
+       (your skills, the market, your application quality) genuinely
+       changes over that time.
+ 
+    Both are simple, explainable statistical corrections - not a
+    claim of real machine learning.
+    db_outcomes: [{"tags": [...], "status": "...", "updated_at": date | None}]
+    """
+    as_of = as_of or date.today()
     raw_deltas: dict[str, list[float]] = {}
     for o in db_outcomes:
         delta = {"interview": 1.5, "offer": 2.5, "applied": 0, "rejected": -1.0, "ghosted": -0.5}.get(o["status"], 0)
+        updated_at = o.get("updated_at")
+        decay = 1.0
+        if updated_at:
+            if isinstance(updated_at, datetime):
+                outcome_date = updated_at.date()
+            elif isinstance(updated_at, date):
+                outcome_date = updated_at
+            else:
+                outcome_date = date.fromisoformat(str(updated_at)[:10])
+            days_old = (as_of - outcome_date).days
+            decay = _recency_decay(days_old)
         for tag in o.get("tags", []):
-            raw_deltas.setdefault(tag, []).append(delta)
+            raw_deltas.setdefault(tag, []).append(delta * decay)
  
     weights = {}
     for tag, deltas in raw_deltas.items():
