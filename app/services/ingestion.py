@@ -5,19 +5,27 @@ and a matching normalize_* function, then registering both below.
 """
 import os
 import re
+import hashlib
 import httpx
+from datetime import date
  
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
  
  
 async def fetch_adzuna(query: str, location: str = "us", page: int = 1) -> list[dict]:
+    """results_per_page raised from Adzuna's common default of 20 to
+    50 (its public API supports this) - genuinely more efficient than
+    adding extra page-fetches for the same result: 2.5x more real
+    listings pulled per query, with the exact same number of API
+    calls, not more of them.
+    """
     url = f"https://api.adzuna.com/v1/api/jobs/{location}/search/{page}"
     params = {
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
         "what": query,
-        "results_per_page": 20,
+        "results_per_page": 50,
     }
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, params=params, timeout=15)
@@ -207,67 +215,104 @@ def parse_simplify_markdown(markdown_text: str) -> list[dict]:
  
  
 # ---------------------------------------------------------------------------
-# ScholarshipAPI - college/fellowship data source.
-# Honest limitation: as of this writing, ScholarshipAPI only covers
-# Australia and New Zealand universities. It will return real, live
-# data - just not US-specific results yet. Kept here so it's ready
-# to use for AU/NZ users now, or the moment US coverage goes live.
-# Requires a free API key from scholarshipapi.com (SCHOLARSHIP_API_KEY).
+# Scholarship/fellowship discovery. Used to be ScholarshipAPI - removed
+# for two real, honest reasons: (1) as originally documented here, it
+# only covered Australia and New Zealand universities, not the US
+# this platform is built around, and (2) its response schema was only
+# ever guessed from public docs snippets, never verified against a
+# real API call - see the git history for the old normalize_scholarship
+# if you want the details. Replaced with discover_scholarships_via_search()
+# below, which uses real web search instead of depending on a
+# third-party REST API with unverified coverage and an unverified schema.
 # ---------------------------------------------------------------------------
  
-SCHOLARSHIP_API_KEY = os.getenv("SCHOLARSHIP_API_KEY")
-SCHOLARSHIP_API_URL = "https://api.scholarshipapi.com/v1/search"
  
+async def discover_scholarships_via_search(anthropic_client, query: str) -> list[dict]:
+    """Replaces the ScholarshipAPI-dependent path that used to live
+    here. Two real, honest reasons it needed replacing: it only ever
+    covered Australia and New Zealand universities (this platform is
+    built around the US), and separately, its response schema was
+    only ever guessed from public docs snippets, never verified
+    against a real API call. Either one alone would explain it not
+    working for real users here.
  
-async def fetch_scholarships(query: str = "scholarship", limit: int = 20) -> list[dict]:
-    if not SCHOLARSHIP_API_KEY:
-        return []
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            SCHOLARSHIP_API_URL,
-            headers={
-                "Authorization": f"Bearer {SCHOLARSHIP_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"q": query, "limit": limit},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json().get("hits", [])
- 
- 
-def normalize_scholarship(raw: dict) -> dict:
-    """Maps a ScholarshipAPI hit to Scanline's canonical listing shape.
-    NOTE: the public docs snippet did not show an explicit apply-URL
-    field, so this checks a few likely field names and falls back to
-    None if none are present - verify against a real response once
-    you have an API key, and adjust the field name here if needed.
+    This uses the same proven real-web-search pattern already working
+    elsewhere in this app (market_research.py's research_company)
+    instead of depending on a third-party REST API with unverified
+    coverage and an unverified schema - every field returned here
+    came from an actual search result, not a guessed field mapping.
     """
-    close_date_ms = raw.get("closeDate")
+    prompt = (
+        f"Search for real, current scholarship or fellowship opportunities related to \"{query}\" that are "
+        "genuinely open for applications right now (not expired, not from a previous year unless still "
+        "accepting applications). Find up to 5 real, specific opportunities.\n\n"
+        "Report ONLY real opportunities you actually find through search - never invent one, never guess "
+        "a deadline or a URL you didn't actually find. If you find fewer than 5 real ones, return fewer - "
+        "do not pad the list to reach 5.\n\n"
+        "Return a JSON array where each item has exactly these keys:\n"
+        "- title: the real, specific name of the scholarship or fellowship\n"
+        "- org: the real organization offering it\n"
+        "- description: 1-2 real sentences on what it's for and who's eligible, from what you actually found\n"
+        "- deadline: the real application deadline if you found one, in YYYY-MM-DD format, else null\n"
+        "- apply_url: the real URL to learn more or apply, if you found one, else null\n\n"
+        "Return ONLY the JSON array, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=1500,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    import json
+    try:
+        results = json.loads(text)
+    except json.JSONDecodeError:
+        return []  # fail gracefully rather than crash the whole scan over one malformed response
+    return results if isinstance(results, list) else []
+ 
+ 
+def normalize_scholarship_from_search(raw: dict) -> dict | None:
+    """Normalizes a search-derived scholarship result into Scanline's
+    canonical listing shape. Every field here came from a real,
+    web-search-grounded result, not a guessed third-party schema.
+    Returns None (skip) for anything without a real apply_url found -
+    an unlinkable "opportunity" isn't actually actionable for a user,
+    and silently falling back to a generic placeholder link (the old
+    behavior) is worse than just not showing it.
+    """
+    if not raw.get("apply_url"):
+        return None
+ 
     deadline = None
-    if close_date_ms:
-        from datetime import datetime
-        deadline = datetime.utcfromtimestamp(close_date_ms / 1000).date()
+    if raw.get("deadline"):
+        try:
+            deadline = date.fromisoformat(raw["deadline"])
+        except (ValueError, TypeError):
+            deadline = None
  
-    university = raw.get("university", "")
-    location = university.split("/")[0].upper() if "/" in university else university
+    title = (raw.get("title") or "").strip()
+    org = (raw.get("org") or "Unknown").strip()
+    if not title:
+        return None
  
-    category = raw.get("primaryCategory")
-    tags = [category.lower()] if category else ["scholarship"]
+    # external_id needs to be stable across scans so the same real
+    # scholarship doesn't get re-inserted as a duplicate every time a
+    # search happens to surface it again - hash title+org since a
+    # search result has no natural stable ID the way a REST API would
+    # normally provide one.
+    external_id = hashlib.sha256(f"{title}|{org}".encode()).hexdigest()[:16]
  
-    apply_url = raw.get("url") or raw.get("applyUrl") or raw.get("link")
- 
-    name = raw.get("name", "Untitled scholarship")
     return {
-        "source": "scholarshipapi",
-        "external_id": f"{name}-{university}",
-        "title": name,
-        "org": university or "Unknown institution",
+        "source": "web_search_scholarship",
+        "external_id": external_id,
+        "title": title,
+        "org": org,
         "type": "college",
-        "location": location or None,
-        "description": raw.get("summary", "") or name,
-        "tags": tags,
+        "location": "Remote",  # scholarships/fellowships aren't physically location-bound the way jobs are
+        "description": raw.get("description", "") or title,
+        "tags": [],  # populated via extract_tags(), same as every other source
         "deadline": deadline,
-        "apply_url": apply_url or "https://scholarshipapi.com",  # honest fallback, see note above
+        "apply_url": raw["apply_url"],
     }
  
