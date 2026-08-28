@@ -35,6 +35,10 @@ SYNONYM_GROUPS = [
     {"bio", "biology", "biotech"},
     {"sales", "businessdevelopment", "accountexecutive", "ae", "bd"},
     {"operations", "ops", "logistics", "supplychain"},
+    {"hr", "humanresources", "peopleops", "recruiting", "talentacquisition"},
+    {"customersuccess", "customersupport", "clientsuccess", "accountmanagement"},
+    {"healthcare", "clinical", "patientcare", "medical"},
+    {"legal", "compliance", "paralegal", "regulatory"},
 ]
 _SYNONYM_LOOKUP: dict[str, set[str]] = {}
 for _group in SYNONYM_GROUPS:
