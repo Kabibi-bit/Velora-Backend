@@ -19,6 +19,7 @@ import asyncio
 JOB_SEARCH_QUERIES = [
     "internship", "software engineer", "product manager", "marketing",
     "data analyst", "sales", "financial analyst", "operations", "ux designer",
+    "human resources", "customer success", "healthcare", "legal",
 ]
 SCHOLARSHIP_SEARCH_QUERIES = ["scholarship", "fellowship", "grant"]
 from datetime import datetime
