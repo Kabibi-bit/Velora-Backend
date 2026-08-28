@@ -149,11 +149,78 @@ def _description_overlap_factor(listing: dict, goal_tokens: list[str], skill_tok
     return contribution, found[:5]
  
  
-def score_listing(listing: dict, profile: dict) -> Optional[dict]:
+def assess_listing_data_quality(listing: dict) -> dict:
+    """Every listing gets scored with the same apparent confidence,
+    but the underlying data backing that score varies enormously - a
+    listing with a real description and 5+ specific tags supports a
+    genuinely trustworthy score; one with a 2-word title, no
+    description, and 1 generic tag does not, no matter how the math
+    comes out. This is honest about that gap instead of letting a
+    thin listing produce a falsely confident-looking percentage.
+ 
+    Returns a quality tier and the specific real reasons behind it -
+    not a black-box penalty.
+    """
+    reasons = []
+    points = 0
+ 
+    title = (listing.get("title") or "").strip()
+    if len(title.split()) >= 3:
+        points += 1
+    else:
+        reasons.append("title is very short")
+ 
+    tags = listing.get("tags") or []
+    if len(tags) >= 4:
+        points += 2
+    elif len(tags) >= 2:
+        points += 1
+    else:
+        reasons.append("very few tags to match against")
+ 
+    description = (listing.get("description") or "").strip()
+    if len(description) >= 200:
+        points += 2
+    elif len(description) >= 50:
+        points += 1
+    else:
+        reasons.append("no real description text - matching relies on tags alone")
+ 
+    if listing.get("location"):
+        points += 1
+    else:
+        reasons.append("no location listed")
+ 
+    if listing.get("deadline"):
+        points += 1
+    else:
+        reasons.append("no deadline listed")
+ 
+    # Max possible: 1 (title) + 2 (tags) + 2 (description) + 1 (location) + 1 (deadline) = 7
+    if points >= 6:
+        tier = "rich"
+    elif points >= 3:
+        tier = "adequate"
+    else:
+        tier = "thin"
+ 
+    return {"tier": tier, "points": points, "max_points": 7, "reasons": reasons}
+ 
+ 
+def score_listing(listing: dict, profile: dict, factor_weights: dict | None = None) -> Optional[dict]:
     """Returns None if the listing is excluded by a dealbreaker, else a
     structured score dict with a top-level score_pct plus every named
     factor that contributed to it, independently inspectable.
+ 
+    factor_weights, when provided, is the output of
+    get_personalized_factor_weights() - real, per-user multipliers
+    learned from logged outcomes about which TYPES of signal actually
+    predict success for THIS person. Defaults to no personalization
+    (every factor at its designed weight) when not provided or when
+    there isn't yet enough outcome history to learn from - fully
+    backward compatible.
     """
+    factor_weights = factor_weights or {}
     dealbreakers = (profile.get("dealbreakers") or "").lower()
     if any(tag in dealbreakers for tag in listing["tags"]):
         return None
@@ -188,6 +255,16 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
     semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"))
  
+    # Apply personalized weighting - each factor's REAL, learned
+    # reliability for this specific person, not a generic default.
+    goal_fit *= factor_weights.get("goal_fit", 1.0)
+    skill_fit *= factor_weights.get("skill_fit", 1.0)
+    priority_fit *= factor_weights.get("priority_fit", 1.0)
+    location_fit *= factor_weights.get("location_fit", 1.0)
+    deadline_urgency *= factor_weights.get("deadline_urgency", 1.0)
+    description_fit *= factor_weights.get("description_fit", 1.0)
+    semantic_fit *= factor_weights.get("semantic_fit", 1.0)
+ 
     raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit + semantic_fit
     # Headroom only applies for factors that actually had real data to
     # work with - a listing/profile pair with no embeddings (true
@@ -219,6 +296,8 @@ def score_listing(listing: dict, profile: dict) -> Optional[dict]:
         "skill_match_tags": list(set(matched_skill)),
         "signal_strength": signal_strength,
         "factors_engaged": factors_engaged,
+        "personalized": bool(factor_weights),
+        "data_quality": assess_listing_data_quality(listing),
         "factors": {
             "goal_fit": round(goal_fit, 2),
             "skill_fit": round(skill_fit, 2),
@@ -266,8 +345,12 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
     if days_left is not None and 0 <= days_left <= 14:
         deadline_note = f" It also closes in {days_left} day{'s' if days_left != 1 else ''}, so it's worth acting on soon if you're interested."
  
+    quality_note = ""
+    if match.get("data_quality", {}).get("tier") == "thin":
+        quality_note = " Worth knowing: this listing itself has very little real data behind it (a short title, few tags, no real description) - treat this score as a rough starting point, not a confident read."
+ 
     if not clauses:
-        return "Looser fit - no strong overlap with your stated goal, skills, or priorities yet, but worth a glance while broadening this cycle's search." + deadline_note
+        return "Looser fit - no strong overlap with your stated goal, skills, or priorities yet, but worth a glance while broadening this cycle's search." + deadline_note + quality_note
  
     if len(clauses) == 1:
         joined = clauses[0]
@@ -276,7 +359,7 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
     else:
         joined = ", ".join(clauses[:-1]) + f", and {clauses[-1]}"
  
-    return f"This {joined}.{deadline_note}"
+    return f"This {joined}.{deadline_note}{quality_note}"
  
  
 def _recency_decay(days_old: float, half_life_days: float = 90.0) -> float:
@@ -336,13 +419,124 @@ def get_tag_weights_from_outcomes(db_outcomes: list[dict], as_of: "date | None" 
     return weights
  
  
-def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None) -> list[dict]:
+FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadline_urgency", "description_fit", "semantic_fit"]
+POSITIVE_STATUSES = {"interview", "offer"}
+ 
+ 
+def compute_factor_reliability(applications_with_outcomes: list[dict]) -> dict:
+    """The genuinely higher-order learning capability: not which TAGS
+    predict success for this person (get_tag_weights_from_outcomes
+    already covers that), but which TYPES OF SIGNAL do. Maybe this
+    person's stated goal text is aspirational and doesn't actually
+    predict what they succeed at, while their concrete skills do -
+    or maybe semantic similarity is catching real fits that keyword
+    matching misses for them specifically. No mainstream job platform
+    does this: audits which of its own reasoning signals are actually
+    trustworthy, per person, from real logged outcomes.
+ 
+    applications_with_outcomes: [{"factors_snapshot": {...}, "outcome_status": "..."}]
+    Returns: {factor_name: reliability_multiplier}. 1.0 = neutral
+    (insufficient data, or this factor performs at baseline).
+    Above 1.0 = this factor's presence has genuinely correlated with
+    better outcomes for this person. Below 1.0 = it hasn't - meaning
+    it should count for less in their future scores.
+    """
+    usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
+    if len(usable) < 4:
+        return {f: 1.0 for f in FACTOR_NAMES}  # too little data to trust any personalization yet
+ 
+    overall_positive = sum(1 for a in usable if a["outcome_status"] in POSITIVE_STATUSES)
+    baseline_rate = overall_positive / len(usable)
+    if baseline_rate == 0:
+        return {f: 1.0 for f in FACTOR_NAMES}  # no positive outcomes at all yet - nothing to learn a lift from
+ 
+    multipliers = {}
+    for factor in FACTOR_NAMES:
+        engaged = [a for a in usable if (a["factors_snapshot"].get(factor) or 0) > 0]
+        n = len(engaged)
+        if n < 2:
+            multipliers[factor] = 1.0
+            continue
+        engaged_positive = sum(1 for a in engaged if a["outcome_status"] in POSITIVE_STATUSES)
+        engaged_rate = engaged_positive / n
+        raw_multiplier = engaged_rate / baseline_rate if baseline_rate > 0 else 1.0
+        # Same confidence-weighted shrinkage discipline as the tag
+        # learner: a multiplier built from 2 outcomes should barely
+        # move from neutral; one built from 15 can move more.
+        confidence = n / (n + 3)
+        shrunk_multiplier = 1.0 + (raw_multiplier - 1.0) * confidence
+        multipliers[factor] = round(max(0.3, min(2.0, shrunk_multiplier)), 3)  # bounded - never zero out or triple-count a factor entirely from heuristic learning alone
+    return multipliers
+ 
+ 
+def get_personalized_factor_weights(db_applications: list[dict]) -> dict:
+    """Wraps compute_factor_reliability for the real DB-shaped input:
+    applications joined with their eventual outcome status. See the
+    route layer for how this join is actually built.
+    """
+    return compute_factor_reliability(db_applications)
+ 
+ 
+def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict:
+    """The self-audit no mainstream job platform does: checks whether
+    its OWN personalization is actually helping, instead of assuming
+    a cleverer-sounding algorithm is automatically a better one. It's
+    entirely possible personalized weighting moves scores around
+    without making them more accurate for a given person - or even
+    makes them worse. This catches that honestly rather than hiding
+    behind the appearance of sophistication.
+ 
+    applications_with_outcomes: [{"confidence_pct": float,
+    "counterfactual_confidence_pct": float | None, "outcome_status": str}]
+ 
+    Method: a simple calibration-loss comparison (lower is better) -
+    for a positive outcome, a well-calibrated score should have been
+    high; for a negative outcome, it should have been low. Compares
+    total loss for the real (personalized) score against what the
+    same application would have scored without personalization,
+    restricted to cases where personalization actually moved the
+    number meaningfully (otherwise there's nothing to compare).
+    """
+    POSITIVE_STATUSES = {"interview", "offer"}
+ 
+    def loss(score: float, was_positive: bool) -> float:
+        return (100 - score) if was_positive else score
+ 
+    comparable = [
+        a for a in applications_with_outcomes
+        if a.get("counterfactual_confidence_pct") is not None
+        and abs(float(a["confidence_pct"]) - float(a["counterfactual_confidence_pct"])) >= 3
+    ]
+    if len(comparable) < 4:
+        return {"verdict": "insufficient_data", "sample_size": len(comparable), "note": "Not enough applications yet where personalization actually changed the score by a meaningful amount - need at least 4 to draw a real conclusion."}
+ 
+    personalized_loss = sum(loss(float(a["confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
+    baseline_loss = sum(loss(float(a["counterfactual_confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
+    improvement = baseline_loss - personalized_loss  # positive = personalization reduced error (helping)
+ 
+    if improvement > 3:
+        verdict = "helping"
+    elif improvement < -3:
+        verdict = "hurting"
+    else:
+        verdict = "neutral"
+ 
+    return {
+        "verdict": verdict,
+        "sample_size": len(comparable),
+        "personalized_avg_error": round(personalized_loss, 2),
+        "baseline_avg_error": round(baseline_loss, 2),
+        "improvement": round(improvement, 2),
+    }
+ 
+ 
+def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None) -> list[dict]:
     tag_weights = tag_weights or {}
     scored = []
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
             continue
-        match = score_listing(listing, profile)
+        match = score_listing(listing, profile, factor_weights=factor_weights)
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
@@ -353,7 +547,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
     return scored[:top_n]
  
  
-def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
+def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
     """The 'why not' transparency feature - most job boards silently
     drop everything below the cutoff. This surfaces the next several
     listings just below it, with the SAME real, grounded rationale
@@ -365,7 +559,7 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
             continue
-        match = score_listing(listing, profile)
+        match = score_listing(listing, profile, factor_weights=factor_weights)
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
