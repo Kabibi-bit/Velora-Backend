@@ -1,11 +1,14 @@
+import os
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import anthropic
  
 from app.db import get_db
 from app.models.db_models import Outcome
  
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
 VALID_STATUSES = {"applied", "interview", "rejected", "ghosted", "offer"}
  
@@ -115,4 +118,42 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db)):
         if str(a.listing_id) in outcome_by_listing
     ]
     return audit_personalization_effect(audit_input)
+ 
+ 
+@router.get("/{user_id}/personalization-insights")
+def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
+    """The genuine depth upgrade beyond factor-category reweighting -
+    reads the real content of applications you actually sent, not
+    just pre-computed numeric factor tallies, and finds specific,
+    content-grounded patterns in what's actually worked. Complements
+    /personalization-audit (which checks whether the numeric
+    reweighting is helping) with something numbers alone can't give:
+    real qualitative insight into what you've actually written.
+    """
+    from app.models.db_models import Application, Listing
+    from app.services.matching import generate_deep_personalization_insights
+ 
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
+ 
+    applications = (
+        db.query(Application, Listing)
+        .join(Listing, Application.listing_id == Listing.id)
+        .filter(Application.user_id == user_id)
+        .all()
+    )
+    app_input = [
+        {
+            "draft_content": a.draft_content,
+            "listing_title": listing.title,
+            "listing_org": listing.org,
+            "listing_tags": listing.tags or [],
+            "outcome_status": outcome_by_listing.get(str(a.listing_id)),
+        }
+        for a, listing in applications
+    ]
+    try:
+        return generate_deep_personalization_insights(client, app_input)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate personalization insights just now: {e}")
  
