@@ -69,11 +69,28 @@ def _terms_match(a: str, b: str) -> bool:
     return bool(group_a and b_clean in group_a)
  
  
-def filter_dealbreakers(listings: list[dict], dealbreakers: str) -> list[dict]:
+def _has_dealbreaker(tags: list[str], dealbreakers: str) -> bool:
+    """Fixed a real false-positive: the previous check was a blind
+    substring containment (`tag in dealbreakers_text`), which meant a
+    dealbreaker of "javascript" would silently exclude any listing
+    tagged "java" - a completely different, unrelated language -
+    because "java" is literally a substring of "javascript". Dealbreakers
+    are meant to be a precise safety filter; a false-positive here
+    means hiding a genuinely good match for no real reason. This uses
+    the same word-boundary-respecting tokenizer used everywhere else
+    in matching, so "java" and "javascript" are correctly treated as
+    distinct terms, not substrings of one another.
+    """
     if not dealbreakers:
-        return listings
-    db_tokens = dealbreakers.lower()
-    return [l for l in listings if not any(tag in db_tokens for tag in l["tags"])]
+        return False
+    dealbreaker_tokens = set(tokenize(dealbreakers))
+    if not dealbreaker_tokens:
+        return False
+    for tag in tags:
+        tag_tokens = set(tokenize(tag)) | {tag.lower().replace("-", "")}
+        if dealbreaker_tokens & tag_tokens:
+            return True
+    return False
  
  
 def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
@@ -122,19 +139,22 @@ def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | Non
  
  
 def _description_overlap_factor(listing: dict, goal_tokens: list[str], skill_tokens: list[str], matched_tag_terms: set[str]) -> tuple[float, list[str]]:
-    """Real signal from the actual job description text, not just the
+    """Real signal from the actual job posting text, not just the
     6-10 tags an earlier ingestion step compressed it down to. Tag
     extraction is inherently lossy - a specific requirement mentioned
     once in a long posting can easily not survive being reduced to a
-    handful of tags. This scans the real description for goal/skill
-    terms that AREN'T already accounted for by a tag match, catching
-    real signal the compression step lost - without needing a paid AI
-    call for every listing in every scan.
+    handful of tags. This scans the title AND description for goal/
+    skill terms that AREN'T already accounted for by a tag match -
+    the title is often the single most information-dense field on a
+    listing (a real gap existed here where a term appearing only in
+    the title, never in tags or description, was completely invisible
+    to this factor) - catching real signal the compression step lost,
+    without needing a paid AI call for every listing in every scan.
     """
-    description = (listing.get("description") or "").lower()
-    if not description:
+    combined_text = f"{listing.get('title') or ''} {listing.get('description') or ''}".lower()
+    if not combined_text.strip():
         return 0.0, []
-    desc_tokens = set(tokenize(description))
+    desc_tokens = set(tokenize(combined_text))
     found = []
     for term in set(goal_tokens) | set(skill_tokens):
         term_clean = term.replace("-", "")
@@ -221,8 +241,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     backward compatible.
     """
     factor_weights = factor_weights or {}
-    dealbreakers = (profile.get("dealbreakers") or "").lower()
-    if any(tag in dealbreakers for tag in listing["tags"]):
+    if _has_dealbreaker(listing["tags"], profile.get("dealbreakers") or ""):
         return None
  
     goal_tokens = tokenize(f"{profile['northstar']} {profile.get('final_idea', '')}")
@@ -266,14 +285,17 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     semantic_fit *= factor_weights.get("semantic_fit", 1.0)
  
     raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit + semantic_fit
-    # Headroom only applies for factors that actually had real data to
-    # work with - a listing/profile pair with no embeddings (true
-    # whenever Voyage isn't configured, or for every demo/mock
-    # listing) shouldn't have its ceiling diluted by headroom for a
-    # signal it could never produce. Same principle already applied
-    # to description_fit.
-    description_headroom = 2.0 if listing.get("description") else 0.0
-    semantic_headroom = 4.0 if (listing.get("embedding") is not None and profile.get("embedding") is not None) else 0.0
+    # Headroom only applies for factors that actually earned real
+    # points for THIS listing/profile pair, not just ones that
+    # theoretically could have - whether title+description text turns
+    # into a real contribution depends on this specific profile's
+    # terms overlapping it, not just on the text existing. Tying
+    # headroom to actual earned contribution (rather than trying to
+    # predict potential contribution ahead of time) means no
+    # listing/profile pair is ever diluted by a ceiling for a signal
+    # that contributed nothing.
+    description_headroom = 2.0 if description_fit > 0 else 0.0
+    semantic_headroom = 4.0 if semantic_fit > 0 else 0.0
     denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom + semantic_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
