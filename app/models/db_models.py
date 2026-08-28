@@ -134,6 +134,8 @@ class Application(Base):
     sent_at = Column(DateTime)
     auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    factors_snapshot = Column(JSONB, nullable=True)  # the score_listing() factor breakdown at creation time - without this, there's no way to later learn which TYPES of signal actually predicted success for this user
+    counterfactual_confidence_pct = Column(Numeric(5, 2), nullable=True)  # what the score WOULD have been without personalized factor weighting - without this, there's no way to check whether personalization is actually helping this user or just moving the number around
  
  
 class Tutor(Base):
