@@ -648,8 +648,19 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
     matches = presentable[:top_n]
  
+    # Adaptive, not fixed: when fewer than top_n listings genuinely
+    # clear the bar, the person still deserves a full picture of what
+    # else is out there - showing more near-misses to make up the
+    # shortfall gives them real options to look at, never by lowering
+    # the bar for what counts as a "match", only by being more
+    # generous about what counts as "worth showing you why it fell
+    # short". A cycle with only 2 real matches now shows up to 13
+    # honestly-labeled near-misses instead of a fixed 5.
+    shortfall = max(0, top_n - len(matches))
+    adaptive_near_miss_n = near_miss_n + shortfall
+ 
     shown_ids = {m["id"] for m in matches}
-    near_misses = [s for s in scored if s["id"] not in shown_ids][:near_miss_n]
+    near_misses = [s for s in scored if s["id"] not in shown_ids][:adaptive_near_miss_n]
  
     return matches, near_misses
  
