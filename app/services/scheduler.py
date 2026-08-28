@@ -4,6 +4,23 @@ for every user with an active profile. This is what makes the
 """
 import os
 import asyncio
+ 
+# Both real search sources (Adzuna for jobs, ScholarshipAPI for
+# fellowships) were being queried with exactly ONE hardcoded term on
+# every single scan, every time, for the entire life of this app -
+# "internship" for jobs, "scholarship" for fellowships. This meant
+# entire real career categories - software engineering, marketing,
+# sales, data, finance, design - were NEVER pulled from Adzuna at
+# all, not because Adzuna doesn't have them (it certainly does), but
+# because the app never once asked. This is the backend-native
+# version of the exact same coverage gap found and fixed in the
+# frontend demo's static listing set - here it's fixed by actually
+# querying broadly instead of hardcoding a single term.
+JOB_SEARCH_QUERIES = [
+    "internship", "software engineer", "product manager", "marketing",
+    "data analyst", "sales", "financial analyst", "operations", "ux designer",
+]
+SCHOLARSHIP_SEARCH_QUERIES = ["scholarship", "fellowship", "grant"]
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy.orm import Session
@@ -65,16 +82,26 @@ def _embed_listing(title: str, description: str, tags: list[str]) -> list[float]
     return generate_embedding(text, input_type="document")
  
  
-async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
+async def _pull_and_store_new_listings(db: Session):
     """Fetches real listings from two sources - Adzuna for jobs (tagged
     via Claude) and SimplifyJobs for internships (tagged via free
     keyword matching, no AI cost) - and upserts anything new.
+ 
+    Adzuna gets queried once per term in JOB_SEARCH_QUERIES, not once
+    overall - a single hardcoded "internship" query meant entire real
+    career categories were never being pulled at all, regardless of
+    how good the downstream matching got.
     """
     stored_count = 0
  
-    # Source 1: Adzuna, for jobs
-    raw_results = await fetch_adzuna(query)
-    adzuna_normalized = dedupe_listings([normalize_adzuna(r) for r in raw_results])
+    # Source 1: Adzuna, for jobs - queried across every category in
+    # JOB_SEARCH_QUERIES, not just one hardcoded term, then merged
+    # and deduped by (source, external_id) before any DB writes or
+    # paid tag-extraction calls happen on a listing twice.
+    all_adzuna_raw = []
+    for q in JOB_SEARCH_QUERIES:
+        all_adzuna_raw.extend(await fetch_adzuna(q))
+    adzuna_normalized = dedupe_listings([normalize_adzuna(r) for r in all_adzuna_raw])
     for item in adzuna_normalized:
         exists = (
             db.query(Listing)
@@ -118,11 +145,17 @@ async def _pull_and_store_new_listings(db: Session, query: str = "internship"):
  
     # Source 3: ScholarshipAPI, for college/fellowship data - no-ops
     # automatically if SCHOLARSHIP_API_KEY isn't set, so this is safe
-    # to leave in even before you have a key.
+    # to leave in even before you have a key. Same fix as Adzuna
+    # above: queried across every term in SCHOLARSHIP_SEARCH_QUERIES,
+    # not just "scholarship" alone, then deduped before any DB writes
+    # (the same real fellowship could otherwise turn up under more
+    # than one query term).
     try:
-        raw_scholarships = await fetch_scholarships()
-        for raw in raw_scholarships:
-            item = normalize_scholarship(raw)
+        all_scholarship_raw = []
+        for q in SCHOLARSHIP_SEARCH_QUERIES:
+            all_scholarship_raw.extend(await fetch_scholarships(query=q))
+        scholarship_normalized = dedupe_listings([normalize_scholarship(r) for r in all_scholarship_raw])
+        for item in scholarship_normalized:
             exists = (
                 db.query(Listing)
                 .filter(Listing.source == item["source"], Listing.external_id == item["external_id"])
