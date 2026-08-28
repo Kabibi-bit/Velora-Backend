@@ -113,6 +113,12 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     for listing in ranked:
         listing["roadmap_alignment"] = compute_roadmap_alignment(listing, milestone_dicts)
  
+    low_match_note = None
+    if len(ranked) == 0:
+        low_match_note = "No strong matches this cycle - nothing in the current listing pool genuinely clears the bar for your stated goal and skills. This isn't padded with weaker options; check the near-misses below for what came closest, or broaden your search criteria."
+    elif len(ranked) < 5:
+        low_match_note = f"Only {len(ranked)} listing{'s' if len(ranked) != 1 else ''} genuinely cleared the quality bar this cycle - shown as-is rather than padded with weaker options to hit a round number."
+ 
     return {
         "matches": ranked,
         "near_misses": near_misses,
@@ -120,6 +126,7 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
         "outcomes_considered": len(outcome_dicts),
         "factor_weights_learned": factor_weights,
         "applications_used_for_learning": len(factor_learning_input),
+        "low_match_note": low_match_note,
     }
  
  
