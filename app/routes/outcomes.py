@@ -82,3 +82,37 @@ def get_calibration(user_id: str, db: Session = Depends(get_db)):
         "note": "Buckets with fewer than a handful of outcomes aren't statistically meaningful yet - log more real outcomes to sharpen this." if total_with_outcomes < 5 else None,
     }
  
+ 
+@router.get("/{user_id}/personalization-audit")
+def get_personalization_audit(user_id: str, db: Session = Depends(get_db)):
+    """The self-audit no mainstream job platform does: checks whether
+    Velora's OWN personalized scoring is actually helping THIS user,
+    or just moving numbers around. Compares the real (personalized)
+    score each application had against what it would have scored
+    without personalization, restricted to cases where the two
+    genuinely differed - then checks which version better tracked
+    the real outcome. Will honestly report "hurting" if that's what
+    the data shows.
+    """
+    from app.models.db_models import Application
+    from app.services.matching import audit_personalization_effect
+ 
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
+ 
+    applications = (
+        db.query(Application)
+        .filter(Application.user_id == user_id, Application.counterfactual_confidence_pct.isnot(None))
+        .all()
+    )
+    audit_input = [
+        {
+            "confidence_pct": float(a.confidence_pct),
+            "counterfactual_confidence_pct": float(a.counterfactual_confidence_pct),
+            "outcome_status": outcome_by_listing[str(a.listing_id)],
+        }
+        for a in applications
+        if str(a.listing_id) in outcome_by_listing
+    ]
+    return audit_personalization_effect(audit_input)
+ 
