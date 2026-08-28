@@ -21,6 +21,10 @@ CAREER_DIRECTIONS = [
     {"id": "social-impact", "title": "Social Impact & Nonprofit", "description": "Working on a mission-driven problem where the impact matters more than the paycheck.", "dims": {"people": 3, "data": 1, "creative": 1, "structure": 1}, "listing_tags": ["policy", "ethics", "mentorship", "leadership"]},
     {"id": "finance-ops", "title": "Finance & Operations", "description": "Keeping the numbers, processes, and logistics of an organization actually working.", "dims": {"people": 0, "data": 2, "creative": 0, "structure": 3}, "listing_tags": ["finance", "excel", "operations", "reporting"]},
     {"id": "sports-athletics", "title": "Sports & Athletics", "description": "A career built around competition, coaching, or the business of sport.", "dims": {"people": 2, "data": 0, "creative": 1, "structure": 1}, "listing_tags": ["athletics", "coaching", "sports management", "training"]},
+    {"id": "sales-bizdev", "title": "Sales & Business Development", "description": "Building relationships and making the case for why someone should say yes - to a product, a partnership, or an idea.", "dims": {"people": 3, "data": 1, "creative": 1, "structure": 1}, "listing_tags": ["sales", "businessdevelopment", "accountexecutive", "growth"]},
+    {"id": "hr-people", "title": "HR & People Operations", "description": "Building the systems and relationships that help an organization's people actually thrive.", "dims": {"people": 3, "data": 0, "creative": 0, "structure": 2}, "listing_tags": ["hr", "humanresources", "recruiting", "peopleops"]},
+    {"id": "customer-success", "title": "Customer Success & Support", "description": "Making sure the people who already chose a product or service actually get real value from it.", "dims": {"people": 3, "data": 1, "creative": 0, "structure": 1}, "listing_tags": ["customersuccess", "customersupport", "accountmanagement", "clientsuccess"]},
+    {"id": "legal-compliance", "title": "Legal & Compliance", "description": "Making sure an organization's decisions actually hold up - to regulation, contracts, and real-world risk.", "dims": {"people": 1, "data": 1, "creative": 0, "structure": 3}, "listing_tags": ["legal", "compliance", "regulatory", "paralegal"]},
 ]
  
  
@@ -70,3 +74,4 @@ def explain_direction_deep(anthropic_client, direction: dict, answers: dict) -> 
         messages=[{"role": "user", "content": prompt}],
     )
     return "".join(b.text for b in resp.content if b.type == "text").strip()
+ 
