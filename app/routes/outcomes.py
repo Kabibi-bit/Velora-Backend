@@ -157,3 +157,34 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate personalization insights just now: {e}")
  
+ 
+@router.get("/{user_id}/factor-interactions")
+def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
+    """Goes beyond /personalization-audit and the numeric weights in
+    /listings/matches: those can only ever say whether a SINGLE
+    factor predicts success in isolation. This checks whether PAIRS
+    of signals only work TOGETHER - e.g. real skill overlap might
+    only actually predict success for this person when it's paired
+    with genuine conceptual fit, and neither alone is enough. A real
+    statistical concept (interaction effects) that even sophisticated
+    platforms rarely expose transparently.
+    """
+    from app.models.db_models import Application
+    from app.services.matching import compute_factor_interactions
+ 
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    outcome_by_listing_status = {str(o.listing_id): o.status for o in outcomes}
+ 
+    applications = (
+        db.query(Application)
+        .filter(Application.user_id == user_id, Application.factors_snapshot.isnot(None))
+        .all()
+    )
+    app_input = [
+        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_by_listing_status[str(a.listing_id)]}
+        for a in applications
+        if str(a.listing_id) in outcome_by_listing_status
+    ]
+    findings = compute_factor_interactions(app_input)
+    return {"findings": findings, "sample_size": len(app_input)}
+ 
