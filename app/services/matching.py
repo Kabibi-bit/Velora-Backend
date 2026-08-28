@@ -423,7 +423,7 @@ FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadli
 POSITIVE_STATUSES = {"interview", "offer"}
  
  
-def compute_factor_reliability(applications_with_outcomes: list[dict]) -> dict:
+def compute_factor_reliability(applications_with_outcomes: list[dict], as_of: "date | None" = None) -> dict:
     """The genuinely higher-order learning capability: not which TAGS
     predict success for this person (get_tag_weights_from_outcomes
     already covers that), but which TYPES OF SIGNAL do. Maybe this
@@ -434,31 +434,52 @@ def compute_factor_reliability(applications_with_outcomes: list[dict]) -> dict:
     does this: audits which of its own reasoning signals are actually
     trustworthy, per person, from real logged outcomes.
  
-    applications_with_outcomes: [{"factors_snapshot": {...}, "outcome_status": "..."}]
+    Applies the same recency decay as get_tag_weights_from_outcomes -
+    a pattern from 8 months ago shouldn't hold as much weight as one
+    from last week, since the underlying signal (the job market, this
+    person's actual skills, how they write applications) genuinely
+    changes over that time. Older versions of this function treated
+    every outcome as equally current forever, which was a real
+    inconsistency with the tag-level learner.
+ 
+    applications_with_outcomes: [{"factors_snapshot": {...},
+    "outcome_status": "...", "updated_at": date | datetime | None}]
     Returns: {factor_name: reliability_multiplier}. 1.0 = neutral
     (insufficient data, or this factor performs at baseline).
     Above 1.0 = this factor's presence has genuinely correlated with
-    better outcomes for this person. Below 1.0 = it hasn't - meaning
-    it should count for less in their future scores.
+    better outcomes for this person, weighted toward their more
+    recent history. Below 1.0 = it hasn't.
     """
+    as_of = as_of or date.today()
+ 
+    def _decay_for(app: dict) -> float:
+        updated_at = app.get("updated_at")
+        if not updated_at:
+            return 1.0  # no timestamp available - treat as current rather than discard
+        outcome_date = updated_at.date() if isinstance(updated_at, datetime) else (updated_at if isinstance(updated_at, date) else date.fromisoformat(str(updated_at)[:10]))
+        return _recency_decay((as_of - outcome_date).days)
+ 
     usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
     if len(usable) < 4:
         return {f: 1.0 for f in FACTOR_NAMES}  # too little data to trust any personalization yet
  
-    overall_positive = sum(1 for a in usable if a["outcome_status"] in POSITIVE_STATUSES)
-    baseline_rate = overall_positive / len(usable)
+    weights = [_decay_for(a) for a in usable]
+    total_weight = sum(weights)
+    positive_weight = sum(w for a, w in zip(usable, weights) if a["outcome_status"] in POSITIVE_STATUSES)
+    baseline_rate = positive_weight / total_weight if total_weight > 0 else 0
     if baseline_rate == 0:
         return {f: 1.0 for f in FACTOR_NAMES}  # no positive outcomes at all yet - nothing to learn a lift from
  
     multipliers = {}
     for factor in FACTOR_NAMES:
-        engaged = [a for a in usable if (a["factors_snapshot"].get(factor) or 0) > 0]
-        n = len(engaged)
+        engaged = [(a, w) for a, w in zip(usable, weights) if (a["factors_snapshot"].get(factor) or 0) > 0]
+        n = len(engaged)  # raw count still gates the confidence floor - a single very-recent outcome shouldn't look like strong evidence just because its weight is high
         if n < 2:
             multipliers[factor] = 1.0
             continue
-        engaged_positive = sum(1 for a in engaged if a["outcome_status"] in POSITIVE_STATUSES)
-        engaged_rate = engaged_positive / n
+        engaged_weight = sum(w for _, w in engaged)
+        engaged_positive_weight = sum(w for a, w in engaged if a["outcome_status"] in POSITIVE_STATUSES)
+        engaged_rate = engaged_positive_weight / engaged_weight if engaged_weight > 0 else 0
         raw_multiplier = engaged_rate / baseline_rate if baseline_rate > 0 else 1.0
         # Same confidence-weighted shrinkage discipline as the tag
         # learner: a multiplier built from 2 outcomes should barely
@@ -651,4 +672,90 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
     parsed["sample_size"] = len(usable)
     parsed["note"] = None
     return parsed
+ 
+ 
+# Curated, meaningful pairs rather than all 21 combinations of 7
+# factors - each pairing tests a genuine hypothesis worth checking,
+# not a combinatorial fishing expedition that would mostly return
+# noise. Framed as (label, factor_a, factor_b).
+INTERACTION_PAIRS = [
+    ("skill overlap + conceptual fit", "skill_fit", "semantic_fit"),
+    ("stated goal + conceptual fit", "goal_fit", "semantic_fit"),
+    ("skill overlap + posting depth", "skill_fit", "description_fit"),
+    ("location + timing", "location_fit", "deadline_urgency"),
+]
+ 
+ 
+def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[dict]:
+    """Goes a real step beyond compute_factor_reliability: that
+    function can only ever say whether a SINGLE factor category
+    predicts success in isolation. It has no way to notice that two
+    signals might only work TOGETHER - e.g. real skill overlap might
+    only actually predict success when it's paired with genuine
+    conceptual fit, and neither alone is enough. This checks for that
+    kind of synergy (or, just as honestly, redundancy) directly from
+    real outcomes - a statistical concept (interaction effects) that
+    even sophisticated platforms rarely expose transparently to users.
+ 
+    Method: for each curated pair (A, B), bucket applications into
+    four groups by whether each factor was engaged (>0) or not.
+    Compare the real positive rate in the "both engaged" bucket
+    against what you'd expect if the two factors' individual lifts
+    were purely additive. A meaningfully higher-than-expected rate is
+    genuine synergy; meaningfully lower is redundancy/interference.
+ 
+    Returns only pairs with enough real data to say something
+    concrete - never guesses from a thin sample.
+    """
+    usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
+    if len(usable) < 8:
+        return []  # interaction effects need more data than single-factor learning to say anything real - honest to return nothing rather than guess
+ 
+    overall_positive = sum(1 for a in usable if a["outcome_status"] in POSITIVE_STATUSES)
+    baseline_rate = overall_positive / len(usable)
+ 
+    findings = []
+    for label, factor_a, factor_b in INTERACTION_PAIRS:
+        def engaged(a, factor):
+            return (a["factors_snapshot"].get(factor) or 0) > 0
+ 
+        both_high = [a for a in usable if engaged(a, factor_a) and engaged(a, factor_b)]
+        a_only = [a for a in usable if engaged(a, factor_a) and not engaged(a, factor_b)]
+        b_only = [a for a in usable if not engaged(a, factor_a) and engaged(a, factor_b)]
+ 
+        if len(both_high) < 3 or len(a_only) < 2 or len(b_only) < 2:
+            continue  # not enough real data in each bucket to say anything concrete about this pair
+ 
+        def positive_rate(apps):
+            return sum(1 for a in apps if a["outcome_status"] in POSITIVE_STATUSES) / len(apps)
+ 
+        both_high_rate = positive_rate(both_high)
+        a_only_lift = positive_rate(a_only) - baseline_rate
+        b_only_lift = positive_rate(b_only) - baseline_rate
+        expected_both_high_rate = baseline_rate + a_only_lift + b_only_lift  # purely additive assumption
+        synergy = both_high_rate - expected_both_high_rate
+ 
+        # Confidence-shrink by the smallest bucket's sample size - the
+        # weakest link in a 3-way comparison, same discipline as
+        # every other learned number in this app.
+        min_n = min(len(both_high), len(a_only), len(b_only))
+        confidence = min_n / (min_n + 4)
+        shrunk_synergy = synergy * confidence
+ 
+        if shrunk_synergy >= 0.15:
+            findings.append({
+                "pair": label, "type": "synergy",
+                "both_engaged_rate": round(both_high_rate, 3),
+                "expected_if_additive": round(max(0, min(1, expected_both_high_rate)), 3),
+                "sample_size": len(both_high),
+            })
+        elif shrunk_synergy <= -0.15:
+            findings.append({
+                "pair": label, "type": "redundant",
+                "both_engaged_rate": round(both_high_rate, 3),
+                "expected_if_additive": round(max(0, min(1, expected_both_high_rate)), 3),
+                "sample_size": len(both_high),
+            })
+ 
+    return findings
  
