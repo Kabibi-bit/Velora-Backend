@@ -421,6 +421,8 @@ def get_tag_weights_from_outcomes(db_outcomes: list[dict], as_of: "date | None" 
  
 FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadline_urgency", "description_fit", "semantic_fit"]
 POSITIVE_STATUSES = {"interview", "offer"}
+PRESENTABLE_MIN_SCORE = 50  # well above the 35 floor - genuinely indicates real signal, not just barely-nonzero
+PRESENTABLE_MIN_SIGNAL = {"moderate", "high"}  # excludes "low" - a single weak factor clearing the score floor still isn't a real match
  
  
 def compute_factor_reliability(applications_with_outcomes: list[dict], as_of: "date | None" = None) -> dict:
@@ -552,28 +554,12 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
  
  
 def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None) -> list[dict]:
-    tag_weights = tag_weights or {}
-    scored = []
-    for listing in listings:
-        if listing["type"] not in profile.get("target_types", []):
-            continue
-        match = score_listing(listing, profile, factor_weights=factor_weights)
-        if match is None:
-            continue
-        adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
-        match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
-        match["rationale"] = explain_score(listing, match, profile)
-        scored.append({**listing, **match})
-    scored.sort(key=lambda l: l["score_pct"], reverse=True)
-    return scored[:top_n]
- 
- 
-def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """The 'why not' transparency feature - most job boards silently
-    drop everything below the cutoff. This surfaces the next several
-    listings just below it, with the SAME real, grounded rationale
-    already computed for every listing (not a separately-invented
-    negative framing) - genuine reasoning, shown either way.
+    """Same quality gate as rank_listings_with_near_misses - never
+    pads results with mediocre listings just to hit top_n. This
+    matters here as much as the browse view: auto-apply calls this
+    to decide what to send applications to, and it should never
+    "auto-apply" to something that barely cleared the scoring floor
+    just because the count needed filling.
     """
     tag_weights = tag_weights or {}
     scored = []
@@ -588,7 +574,49 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
         match["rationale"] = explain_score(listing, match, profile)
         scored.append({**listing, **match})
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
-    return scored[:top_n], scored[top_n:top_n + near_miss_n]
+    presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
+    return presentable[:top_n]
+ 
+ 
+ 
+def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """The 'why not' transparency feature - most job boards silently
+    drop everything below the cutoff. This surfaces the next several
+    listings just below it, with the SAME real, grounded rationale
+    already computed for every listing (not a separately-invented
+    negative framing) - genuine reasoning, shown either way.
+ 
+    Matches are gated by real quality, not padded to a fixed count:
+    every prior version of this function always returned exactly
+    top_n listings, even when the best available option barely
+    cleared the scoring floor - showing something mediocre as a
+    confident "top match" is the same dishonesty as showing near-
+    misses under a falsely negative framing, just in the opposite
+    direction. A cycle with only 2 genuinely good matches returns 2,
+    not 10 padded down to fill the count. See PRESENTABLE_MIN_SCORE /
+    PRESENTABLE_MIN_SIGNAL for the actual bar.
+    """
+    tag_weights = tag_weights or {}
+    scored = []
+    for listing in listings:
+        if listing["type"] not in profile.get("target_types", []):
+            continue
+        match = score_listing(listing, profile, factor_weights=factor_weights)
+        if match is None:
+            continue
+        adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
+        match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
+        match["rationale"] = explain_score(listing, match, profile)
+        scored.append({**listing, **match})
+    scored.sort(key=lambda l: l["score_pct"], reverse=True)
+ 
+    presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
+    matches = presentable[:top_n]
+ 
+    shown_ids = {m["id"] for m in matches}
+    near_misses = [s for s in scored if s["id"] not in shown_ids][:near_miss_n]
+ 
+    return matches, near_misses
  
  
 def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
