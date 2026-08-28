@@ -142,11 +142,12 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         .all()
     )
     user_outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
-    outcome_by_listing = {str(o.listing_id): o.status for o in user_outcomes}
+    outcome_status_by_listing = {str(o.listing_id): o.status for o in user_outcomes}
+    outcome_time_by_listing = {str(o.listing_id): o.updated_at for o in user_outcomes}
     factor_learning_input = [
-        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_by_listing[str(a.listing_id)]}
+        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_status_by_listing[str(a.listing_id)], "updated_at": outcome_time_by_listing.get(str(a.listing_id))}
         for a in applications_with_snapshots
-        if str(a.listing_id) in outcome_by_listing
+        if str(a.listing_id) in outcome_status_by_listing
     ]
     factor_weights = get_personalized_factor_weights(factor_learning_input)
     match = score_listing(listing_dict, profile_dict, factor_weights=factor_weights) or match_no_personalization
