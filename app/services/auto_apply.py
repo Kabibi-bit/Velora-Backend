@@ -75,8 +75,8 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     match in a scan without any manual action. Returns a dict describing
     the result, or a dict with an 'error' key if it couldn't run.
     """
-    from app.models.db_models import Profile, Listing, Application, RoadmapMilestone
-    from app.services.matching import score_listing, compute_roadmap_alignment
+    from app.models.db_models import Profile, Listing, Application, RoadmapMilestone, Outcome
+    from app.services.matching import score_listing, compute_roadmap_alignment, get_personalized_factor_weights
  
     profile = (
         db.query(Profile)
@@ -103,23 +103,53 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
             "already_existed": True,
         }
  
+    from app.services.embeddings import generate_embedding
+    goal_text = f"{profile.northstar or ''}. {profile.final_idea or ''}. Skills: {profile.skills or ''}"
     profile_dict = {
         "northstar": profile.northstar,
         "final_idea": profile.final_idea or "",
         "skills": profile.skills or "",
         "dealbreakers": profile.dealbreakers or "",
         "priorities": profile.priorities or [],
+        "location_pref": profile.location_pref or "",
+        "embedding": generate_embedding(goal_text, input_type="query"),
     }
     listing_dict = {
         "type": listing.type,
         "tags": listing.tags or [],
         "title": listing.title,
         "org": listing.org,
+        "location": listing.location,
+        "deadline": listing.deadline.isoformat() if listing.deadline else None,
+        "description": listing.description or "",
+        "embedding": list(listing.embedding) if listing.embedding is not None else None,
     }
  
-    match = score_listing(listing_dict, profile_dict)
-    if match is None:
+    match_no_personalization = score_listing(listing_dict, profile_dict)
+    if match_no_personalization is None:
         return {"error": "dealbreaker_conflict"}
+ 
+    # This decision (auto-send or not) is the highest-stakes place for
+    # accurate personalized scoring in the whole app - fetch the
+    # user's real learned factor weights and apply them here, not
+    # just when browsing matches. Computing both the personalized and
+    # non-personalized (counterfactual) score lets the self-audit
+    # later check whether personalization is actually helping THIS
+    # decision, not just moving numbers around on a browse page.
+    applications_with_snapshots = (
+        db.query(Application)
+        .filter(Application.user_id == user_id, Application.factors_snapshot.isnot(None))
+        .all()
+    )
+    user_outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    outcome_by_listing = {str(o.listing_id): o.status for o in user_outcomes}
+    factor_learning_input = [
+        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_by_listing[str(a.listing_id)]}
+        for a in applications_with_snapshots
+        if str(a.listing_id) in outcome_by_listing
+    ]
+    factor_weights = get_personalized_factor_weights(factor_learning_input)
+    match = score_listing(listing_dict, profile_dict, factor_weights=factor_weights) or match_no_personalization
  
     milestones = (
         db.query(RoadmapMilestone)
@@ -130,6 +160,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
     alignment = compute_roadmap_alignment(listing_dict, milestone_dicts)
     composite_confidence = compute_composite_confidence(match["score_pct"], roadmap_aligned=alignment is not None)
+    counterfactual_confidence = compute_composite_confidence(match_no_personalization["score_pct"], roadmap_aligned=alignment is not None)
  
     draft_text = draft_application(anthropic_client, listing_dict, profile_dict)
     user_threshold = profile.auto_apply_threshold if getattr(profile, "auto_apply_threshold", None) else None
@@ -143,6 +174,8 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         status=status,
         sendable_at=compute_sendable_at() if status == "approved" else None,
         auto_generated=auto_generated,
+        factors_snapshot={**match["factors"], "signal_strength": match["signal_strength"], "factors_engaged": match["factors_engaged"], "data_quality": match.get("data_quality")},
+        counterfactual_confidence_pct=counterfactual_confidence,
     )
     db.add(app_record)
     db.commit()
