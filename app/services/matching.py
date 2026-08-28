@@ -141,6 +141,13 @@ def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | Non
         pref_tokens = [t for t in tokenize(location_pref) if len(t) > 3]
         if any(t in listing_loc for t in pref_tokens):
             return 1.0, f"based in {listing.get('location')}, inside your stated location preference"
+        # Remote work is inherently compatible with living anywhere -
+        # a real, positive signal even when someone stated a specific
+        # city rather than explicitly asking for remote. Smaller than
+        # an explicit remote match, since we don't know for certain
+        # they'd prefer it over staying near their stated city.
+        if "remote" in listing_loc:
+            return 0.75, "remote, which works regardless of your location"
     return 0.0, None
  
  
