@@ -32,7 +32,7 @@ from app.models.db_models import User, Profile, Listing, MatchScore
 from app.services.ingestion import (
     fetch_adzuna, normalize_adzuna, dedupe_listings, extract_tags,
     fetch_simplify_internships, parse_simplify_markdown,
-    fetch_scholarships, normalize_scholarship,
+    discover_scholarships_via_search, normalize_scholarship_from_search,
     fetch_athletic_career_jobs, normalize_athletic_job,
 )
 from app.services.matching import rank_listings
@@ -144,18 +144,21 @@ async def _pull_and_store_new_listings(db: Session):
     except Exception as e:
         print(f"SimplifyJobs ingestion failed (non-fatal, Adzuna results still saved): {e}")
  
-    # Source 3: ScholarshipAPI, for college/fellowship data - no-ops
-    # automatically if SCHOLARSHIP_API_KEY isn't set, so this is safe
-    # to leave in even before you have a key. Same fix as Adzuna
-    # above: queried across every term in SCHOLARSHIP_SEARCH_QUERIES,
-    # not just "scholarship" alone, then deduped before any DB writes
-    # (the same real fellowship could otherwise turn up under more
-    # than one query term).
+    # Source 3: real web-search-grounded scholarship/fellowship
+    # discovery - replaces the old ScholarshipAPI integration, which
+    # needed replacing for two real, honest reasons: it only ever
+    # covered Australia/New Zealand universities (not the US this
+    # platform is built around), and separately, its response schema
+    # was only ever guessed from public docs, never verified against
+    # a real call. This uses the same proven real-search pattern
+    # already working elsewhere in this app - every field comes from
+    # an actual, current search result, not a guessed field mapping.
     try:
         all_scholarship_raw = []
         for q in SCHOLARSHIP_SEARCH_QUERIES:
-            all_scholarship_raw.extend(await fetch_scholarships(query=q))
-        scholarship_normalized = dedupe_listings([normalize_scholarship(r) for r in all_scholarship_raw])
+            all_scholarship_raw.extend(await discover_scholarships_via_search(anthropic_client, q))
+        scholarship_normalized = [normalize_scholarship_from_search(r) for r in all_scholarship_raw]
+        scholarship_normalized = dedupe_listings([r for r in scholarship_normalized if r is not None])
         for item in scholarship_normalized:
             exists = (
                 db.query(Listing)
@@ -173,7 +176,7 @@ async def _pull_and_store_new_listings(db: Session):
             ))
             stored_count += 1
     except Exception as e:
-        print(f"ScholarshipAPI ingestion failed (non-fatal): {e}")
+        print(f"Scholarship discovery failed (non-fatal): {e}")
  
     # Source 4: Athletic-career jobs (coaching, athletic training, sports
     # management) - real data via the same Adzuna connection, just
