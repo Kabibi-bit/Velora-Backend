@@ -4,7 +4,7 @@ from pydantic import BaseModel
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
-from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, compute_roadmap_alignment
+from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, compute_roadmap_alignment, get_personalized_factor_weights
  
 router = APIRouter(prefix="/listings", tags=["listings"])
  
@@ -75,11 +75,32 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
             outcome_dicts.append({"tags": listing.tags or [], "status": o.status, "updated_at": o.updated_at})
     tag_weights = get_tag_weights_from_outcomes(outcome_dicts)
  
+    # The higher-order learning layer: not just which tags predicted
+    # success (tag_weights above), but which TYPES of signal did -
+    # joins this user's past applications (with their preserved factor
+    # breakdown) against the real outcomes those specific listings
+    # led to.
+    from app.models.db_models import Application
+    applications_with_snapshots = (
+        db.query(Application)
+        .filter(Application.user_id == user_id, Application.factors_snapshot.isnot(None))
+        .all()
+    )
+    outcome_status_by_listing = {str(o.listing_id): o.status for o in outcome_rows}
+    outcome_time_by_listing = {str(o.listing_id): o.updated_at for o in outcome_rows}
+    factor_learning_input = [
+        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_status_by_listing[str(a.listing_id)], "updated_at": outcome_time_by_listing.get(str(a.listing_id))}
+        for a in applications_with_snapshots
+        if str(a.listing_id) in outcome_status_by_listing
+    ]
+    factor_weights = get_personalized_factor_weights(factor_learning_input)
+ 
     ranked, near_misses = rank_listings_with_near_misses(
         [_listing_to_dict(l) for l in listings],
         _profile_to_dict(profile),
         top_n=10,
         tag_weights=tag_weights,
+        factor_weights=factor_weights,
     )
  
     milestones = (
@@ -97,6 +118,8 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
         "near_misses": near_misses,
         "profile_id": str(profile.id),
         "outcomes_considered": len(outcome_dicts),
+        "factor_weights_learned": factor_weights,
+        "applications_used_for_learning": len(factor_learning_input),
     }
  
  
