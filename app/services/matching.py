@@ -30,9 +30,11 @@ SYNONYM_GROUPS = [
     {"fullstack", "full-stack"},
     {"analytics", "analysis", "dataanalysis", "data"},
     {"devops", "infrastructure", "infra"},
-    {"marketing", "growth"},
-    {"finance", "financial"},
+    {"marketing", "growth", "branding", "socialmedia"},
+    {"finance", "financial", "accounting"},
     {"bio", "biology", "biotech"},
+    {"sales", "businessdevelopment", "accountexecutive", "ae", "bd"},
+    {"operations", "ops", "logistics", "supplychain"},
 ]
 _SYNONYM_LOOKUP: dict[str, set[str]] = {}
 for _group in SYNONYM_GROUPS:
