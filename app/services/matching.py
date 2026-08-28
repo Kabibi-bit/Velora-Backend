@@ -592,3 +592,63 @@ def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
         return None
     return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
  
+ 
+def generate_deep_personalization_insights(anthropic_client, applications: list[dict]) -> dict:
+    """The genuine depth upgrade beyond factor-category reweighting:
+    compute_factor_reliability() can tell you "skill_fit predicts
+    success 36% better for you" - a real number, but a shallow one.
+    It can never say WHICH skills, WHY, or ground that in what
+    actually happened, because it only ever sees pre-computed numeric
+    tallies, never the real application content.
+ 
+    This reads the actual draft text, the actual listing, and the
+    real outcome for each application, and asks Claude to find
+    specific, concrete patterns grounded in that real content - not
+    generic career advice, and not another number. This is the part
+    of personalization that genuinely can't be done by arithmetic.
+ 
+    applications: [{"draft_content": str, "listing_title": str,
+    "listing_org": str, "listing_tags": list[str], "outcome_status": str}]
+    """
+    usable = [a for a in applications if a.get("draft_content") and a.get("outcome_status")]
+    if len(usable) < 4:
+        return {
+            "insights": [],
+            "sample_size": len(usable),
+            "note": "Not enough applications with both a draft and a logged outcome yet - need at least 4 to find a real pattern in what you've actually written, rather than guessing.",
+        }
+ 
+    applications_text = "\n\n".join(
+        f"Application {i+1} - to \"{a['listing_title']}\" at {a['listing_org']} (tags: {', '.join(a.get('listing_tags', []))}). "
+        f"Outcome: {a['outcome_status']}.\nWhat was actually sent:\n\"{a['draft_content'][:600]}\""
+        for i, a in enumerate(usable)
+    )
+    prompt = (
+        f"Here are {len(usable)} real job applications a candidate actually sent, each with what they "
+        f"actually wrote and what really happened:\n\n{applications_text}\n\n"
+        "Find SPECIFIC, CONCRETE patterns in what was actually written that correlate with the real "
+        "outcomes - not generic career advice like 'tailor your resume' or 'follow up promptly'. Look for "
+        "things like: specific phrasings, whether achievements were quantified vs described generically, "
+        "which topics or skills were emphasized, sentence structure, length, tone, what got left out. "
+        "Reference the actual applications by number when you find something. If there's truly no clear "
+        "pattern yet, say that honestly rather than inventing one - a small sample size deserves epistemic "
+        "humility, not a confident-sounding guess.\n\n"
+        "Return a JSON object with exactly these two keys:\n"
+        "- insights: an array of 2-4 strings, each a specific, content-grounded finding (or, if genuinely "
+        "no pattern exists, a single honest string saying so)\n"
+        "- confidence: \"low\", \"moderate\", or \"high\" - how confident this pattern-finding actually is "
+        "given the sample size and how consistent the pattern is\n\n"
+        "Return ONLY valid JSON, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=700,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    parsed = json.loads(text)
+    parsed["sample_size"] = len(usable)
+    parsed["note"] = None
+    return parsed
+ 
