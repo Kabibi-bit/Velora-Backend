@@ -240,7 +240,7 @@ def assess_listing_data_quality(listing: dict) -> dict:
     return {"tier": tier, "points": points, "max_points": 7, "reasons": reasons}
  
  
-def score_listing(listing: dict, profile: dict, factor_weights: dict | None = None) -> Optional[dict]:
+def score_listing(listing: dict, profile: dict, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> Optional[dict]:
     """Returns None if the listing is excluded by a dealbreaker, else a
     structured score dict with a top-level score_pct plus every named
     factor that contributed to it, independently inspectable.
@@ -252,6 +252,14 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     (every factor at its designed weight) when not provided or when
     there isn't yet enough outcome history to learn from - fully
     backward compatible.
+ 
+    roadmap_milestones, when provided, makes roadmap alignment a real,
+    named factor that genuinely moves the score - not just a
+    decorative badge shown alongside a number it never influenced,
+    which is what this used to be. A listing that clearly advances
+    your actual current roadmap stage now scores meaningfully higher
+    than an otherwise-identical one that doesn't connect to your plan
+    at all.
     """
     factor_weights = factor_weights or {}
     if _has_dealbreaker(listing["tags"], profile.get("dealbreakers") or ""):
@@ -286,6 +294,8 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     deadline_urgency, days_left = _deadline_urgency_factor(listing)
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
     semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"))
+    roadmap_alignment = compute_roadmap_alignment(listing, roadmap_milestones) if roadmap_milestones else None
+    roadmap_fit = round(roadmap_alignment["strength"] * 3.0, 2) if roadmap_alignment else 0.0
  
     # Apply personalized weighting - each factor's REAL, learned
     # reliability for this specific person, not a generic default.
@@ -296,8 +306,9 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     deadline_urgency *= factor_weights.get("deadline_urgency", 1.0)
     description_fit *= factor_weights.get("description_fit", 1.0)
     semantic_fit *= factor_weights.get("semantic_fit", 1.0)
+    roadmap_fit *= factor_weights.get("roadmap_fit", 1.0)
  
-    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit + semantic_fit
+    raw_total = goal_fit + skill_fit + priority_fit + location_fit + deadline_urgency + description_fit + semantic_fit + roadmap_fit
     # Headroom only applies for factors that actually earned real
     # points for THIS listing/profile pair, not just ones that
     # theoretically could have - whether title+description text turns
@@ -307,9 +318,22 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # predict potential contribution ahead of time) means no
     # listing/profile pair is ever diluted by a ceiling for a signal
     # that contributed nothing.
-    description_headroom = 2.0 if description_fit > 0 else 0.0
-    semantic_headroom = 4.0 if semantic_fit > 0 else 0.0
-    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom + semantic_headroom
+    # Headroom equals each factor's OWN contribution, not a flat
+    # theoretical maximum - this isn't just a heuristic, it's
+    # mathematically guaranteed: adding x to both raw_total and denom
+    # can never decrease the resulting percentage when x > 0 (proof:
+    # (a+x)/(b+x) >= a/b whenever b >= a, which always holds here
+    # since a valid percentage never exceeds its own ceiling). The
+    # earlier flat-headroom version (always the full theoretical max,
+    # e.g. always +4.0 whenever semantic_fit was merely nonzero) could
+    # net DILUTE the score for any weak-but-real match that fell well
+    # short of the theoretical maximum - found via direct testing,
+    # not by inspection, on a semantic_fit case this exact bug had
+    # been hiding in since it was first built.
+    description_headroom = description_fit
+    semantic_headroom = semantic_fit
+    roadmap_headroom = roadmap_fit
+    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom + semantic_headroom + roadmap_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
     # How many INDEPENDENT signals actually agree, not just the
@@ -317,7 +341,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # score_pct while one rests on four factors agreeing and the
     # other rests on a single strong tag match. That distinction is
     # real information the percentage alone can't carry.
-    factors_engaged = sum(1 for v in (goal_fit, skill_fit, priority_fit, location_fit, deadline_urgency, description_fit, semantic_fit) if v > 0)
+    factors_engaged = sum(1 for v in (goal_fit, skill_fit, priority_fit, location_fit, deadline_urgency, description_fit, semantic_fit, roadmap_fit) if v > 0)
     if factors_engaged <= 1:
         signal_strength = "low"
     elif factors_engaged <= 3:
@@ -344,6 +368,8 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
             "description_fit": round(description_fit, 2),
             "description_terms": description_terms,
             "semantic_fit": semantic_fit,
+            "roadmap_fit": roadmap_fit,
+            "roadmap_alignment": roadmap_alignment,
         },
     }
  
@@ -366,6 +392,9 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         clauses.append(f"also mentions {', '.join(factors['description_terms'][:2])} in the actual posting text, beyond what's captured in its tags")
     if factors.get("semantic_fit", 0) >= 2.0:
         clauses.append("is a strong conceptual match for what you're going for, even beyond the specific words in its listing")
+    if factors.get("roadmap_alignment"):
+        ra = factors["roadmap_alignment"]
+        clauses.append(f"directly advances Stage {ra['stage']} of your roadmap (\"{ra['title']}\")")
  
     priorities = profile.get("priorities", [])
     if "pay" in priorities and listing["type"] == "job":
@@ -454,7 +483,7 @@ def get_tag_weights_from_outcomes(db_outcomes: list[dict], as_of: "date | None" 
     return weights
  
  
-FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadline_urgency", "description_fit", "semantic_fit"]
+FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadline_urgency", "description_fit", "semantic_fit", "roadmap_fit"]
 POSITIVE_STATUSES = {"interview", "offer"}
 PRESENTABLE_MIN_SCORE = 50  # well above the 35 floor - genuinely indicates real signal, not just barely-nonzero
 PRESENTABLE_MIN_SIGNAL = {"moderate", "high"}  # excludes "low" - a single weak factor clearing the score floor still isn't a real match
@@ -588,7 +617,7 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
     }
  
  
-def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None) -> list[dict]:
+def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> list[dict]:
     """Same quality gate as rank_listings_with_near_misses - never
     pads results with mediocre listings just to hit top_n. This
     matters here as much as the browse view: auto-apply calls this
@@ -601,7 +630,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
             continue
-        match = score_listing(listing, profile, factor_weights=factor_weights)
+        match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
@@ -614,7 +643,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
  
  
  
-def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None) -> tuple[list[dict], list[dict]]:
+def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> tuple[list[dict], list[dict]]:
     """The 'why not' transparency feature - most job boards silently
     drop everything below the cutoff. This surfaces the next several
     listings just below it, with the SAME real, grounded rationale
@@ -636,7 +665,7 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
             continue
-        match = score_listing(listing, profile, factor_weights=factor_weights)
+        match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
@@ -667,25 +696,37 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
  
 def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
     """Fast, free, deterministic alignment between a listing and the
-    user's roadmap - tag overlap against each milestone's title and
-    description. Shared by /listings/matches (shown on every card)
-    and the auto-apply confidence calculation (a listing that clearly
-    advances the roadmap is a stronger auto-send candidate than one
-    that merely scores well on keywords).
+    user's roadmap. Two real upgrades over the earlier version: uses
+    the same synonym-aware term matching as the rest of the scoring
+    engine (a milestone about "backend development" now correctly
+    recognizes a listing tagged "backend", instead of requiring the
+    literal substring to appear), and reports a graded strength
+    (0-1), not just whether any overlap exists at all - a listing
+    that overlaps heavily with a milestone is genuinely a stronger
+    signal than one with a single incidental tag match, and until now
+    both counted identically.
     """
     if not milestones:
         return None
-    listing_tags = set(t.lower() for t in listing.get("tags", []))
-    best_stage, best_overlap = None, 0
-    for m in milestones:
-        milestone_text = (m["title"] + " " + m["description"]).lower()
-        overlap = sum(1 for tag in listing_tags if tag in milestone_text)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_stage = m
-    if not best_stage or best_overlap == 0:
+    listing_tags = listing.get("tags", [])
+    if not listing_tags:
         return None
-    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": best_overlap}
+    best_stage, best_matched, best_strength = None, [], 0.0
+    for m in milestones:
+        milestone_tokens = set(tokenize(m["title"] + " " + m["description"]))
+        if not milestone_tokens:
+            continue
+        matched = [tag for tag in listing_tags if any(_terms_match(tag.lower(), t) for t in milestone_tokens)]
+        if not matched:
+            continue
+        strength = len(matched) / len(listing_tags)
+        if strength > best_strength:
+            best_strength = strength
+            best_matched = matched
+            best_stage = m
+    if not best_stage:
+        return None
+    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": len(best_matched), "matched_tags": best_matched, "strength": round(best_strength, 3)}
  
  
 def generate_deep_personalization_insights(anthropic_client, applications: list[dict]) -> dict:
