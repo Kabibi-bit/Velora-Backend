@@ -246,15 +246,27 @@ async def discover_scholarships_via_search(anthropic_client, query: str) -> list
         f"Search for real, current scholarship or fellowship opportunities related to \"{query}\" that are "
         "genuinely open for applications right now (not expired, not from a previous year unless still "
         "accepting applications). Find up to 5 real, specific opportunities.\n\n"
-        "Report ONLY real opportunities you actually find through search - never invent one, never guess "
-        "a deadline or a URL you didn't actually find. If you find fewer than 5 real ones, return fewer - "
-        "do not pad the list to reach 5.\n\n"
+        "Quality matters more than quantity here:\n"
+        "- Only include an opportunity if you found it on an authoritative source - the scholarship's own "
+        "page, the sponsoring organization's official site, or a well-known, reputable scholarship "
+        "database. Do NOT include something you only saw mentioned in a generic listicle, a 'top 10 "
+        "scholarships' roundup article, or a forum post repeating unverified claims.\n"
+        "- Never invent or estimate a deadline, amount, or URL you didn't actually find. If a real source "
+        "doesn't clearly state the deadline, leave it null rather than guessing - a missing field is far "
+        "better than a wrong one.\n"
+        "- If you find fewer than 5 that meet this bar, return fewer. Do not pad the list to reach 5, and "
+        "do not lower your standard just to have more results.\n\n"
         "Return a JSON array where each item has exactly these keys:\n"
         "- title: the real, specific name of the scholarship or fellowship\n"
         "- org: the real organization offering it\n"
         "- description: 1-2 real sentences on what it's for and who's eligible, from what you actually found\n"
-        "- deadline: the real application deadline if you found one, in YYYY-MM-DD format, else null\n"
-        "- apply_url: the real URL to learn more or apply, if you found one, else null\n\n"
+        "- deadline: the real application deadline if a source clearly stated one, in YYYY-MM-DD format, else null\n"
+        "- apply_url: the real URL to the scholarship's own page or the sponsoring org's official site - not "
+        "a roundup article that merely mentions it\n"
+        "- confidence: \"high\" if an authoritative source directly and clearly confirmed these details, "
+        "\"moderate\" if the source was reasonably clear but not fully authoritative or slightly dated, "
+        "\"low\" if you're genuinely uncertain about any key detail - be honest here, this isn't a place "
+        "to round up\n\n"
         "Return ONLY the JSON array, nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
@@ -272,16 +284,66 @@ async def discover_scholarships_via_search(anthropic_client, query: str) -> list
     return results if isinstance(results, list) else []
  
  
+def _scholarship_passes_quality_check(raw: dict) -> tuple[bool, str]:
+    """A real, deterministic second layer of defense - never just
+    trusts Claude's own self-reported confidence blindly. Every check
+    here is independently verifiable and fully testable without
+    needing a live search call, unlike the search itself.
+ 
+    Returns (passes, reason) - reason explains why it failed, useful
+    for debugging what a real scan actually rejected and why. Mirrors
+    the same "results only come when they're good" quality-gate
+    principle already applied to candidate match scores elsewhere in
+    this app (see matching.py's PRESENTABLE_MIN_SCORE).
+    """
+    confidence = (raw.get("confidence") or "").lower()
+    if confidence == "low":
+        return False, "self-reported low confidence"
+ 
+    title = (raw.get("title") or "").strip()
+    if not title:
+        return False, "empty title"
+    if len(title) < 8:
+        return False, "title too short to be a real, specific name"
+    generic_titles = {"scholarship", "scholarships", "fellowship", "fellowships", "grant", "grants"}
+    if title.lower() in generic_titles:
+        return False, "title is a generic category word, not a specific real name"
+ 
+    apply_url = (raw.get("apply_url") or "").strip()
+    if not apply_url:
+        return False, "no real apply_url found"
+    if not (apply_url.startswith("http://") or apply_url.startswith("https://")):
+        return False, "apply_url doesn't look like a real URL"
+    if "." not in apply_url.split("//", 1)[-1]:
+        return False, "apply_url has no real-looking domain"
+ 
+    deadline_str = raw.get("deadline")
+    if deadline_str:
+        try:
+            deadline = date.fromisoformat(deadline_str)
+        except (ValueError, TypeError):
+            return False, "deadline is not a valid date"
+        days_from_now = (deadline - date.today()).days
+        if days_from_now < -7:
+            return False, f"deadline is {-days_from_now} days in the past - likely a stale search result"
+        if days_from_now > 730:
+            return False, "deadline is more than 2 years out - unlikely to be a genuinely current opportunity"
+ 
+    return True, ""
+ 
+ 
 def normalize_scholarship_from_search(raw: dict) -> dict | None:
     """Normalizes a search-derived scholarship result into Scanline's
     canonical listing shape. Every field here came from a real,
     web-search-grounded result, not a guessed third-party schema.
-    Returns None (skip) for anything without a real apply_url found -
-    an unlinkable "opportunity" isn't actually actionable for a user,
-    and silently falling back to a generic placeholder link (the old
+    Returns None (skip) for anything that doesn't clear
+    _scholarship_passes_quality_check() - an unverified or low-
+    confidence "opportunity" isn't worth showing a real user, and
+    silently falling back to a generic placeholder (the old ScholarshipAPI
     behavior) is worse than just not showing it.
     """
-    if not raw.get("apply_url"):
+    passes, _reason = _scholarship_passes_quality_check(raw)
+    if not passes:
         return None
  
     deadline = None
@@ -291,10 +353,8 @@ def normalize_scholarship_from_search(raw: dict) -> dict | None:
         except (ValueError, TypeError):
             deadline = None
  
-    title = (raw.get("title") or "").strip()
+    title = raw["title"].strip()
     org = (raw.get("org") or "Unknown").strip()
-    if not title:
-        return None
  
     # external_id needs to be stable across scans so the same real
     # scholarship doesn't get re-inserted as a duplicate every time a
