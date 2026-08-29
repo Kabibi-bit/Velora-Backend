@@ -24,12 +24,51 @@ UNDO_WINDOW_MINUTES = int(os.getenv("UNDO_WINDOW_MINUTES", "30"))
  
  
 def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
+    """A genuinely tailored cover-letter-style paragraph, not a
+    generic template with the company name swapped in. The old
+    version only ever knew the job title, org, and a raw skills
+    string - it never used the actual posting text, the specific
+    overlap already identified during scoring, or any roadmap
+    context, which is exactly why AI-written cover letters usually
+    read like every other AI-written cover letter. Also includes
+    explicit anti-fabrication guardrails: this text may be submitted
+    to a real employer representing a real person, so inventing a
+    specific accomplishment or project they never mentioned isn't
+    just bad writing, it's actually misrepresenting them.
+    """
+    matched_terms = list(dict.fromkeys((listing.get("goal_match_tags") or []) + (listing.get("skill_match_tags") or [])))
+    description = (listing.get("description") or "").strip()
+    roadmap_alignment = (listing.get("factors") or {}).get("roadmap_alignment")
+ 
+    context_lines = [
+        f'Job: "{listing["title"]}" at {listing["org"]}.',
+        f'Candidate\'s stated career goal: "{profile["northstar"]}"',
+        f'Candidate\'s stated skills: "{profile.get("skills", "")}"',
+    ]
+    if description:
+        context_lines.append(f'The actual job posting text: "{description[:600]}"')
+    if matched_terms:
+        context_lines.append(f"Specific real overlap already identified between the candidate and this role: {', '.join(matched_terms)}")
+    if roadmap_alignment:
+        context_lines.append(f'This role specifically advances a stage of the candidate\'s own stated plan: "{roadmap_alignment["title"]}".')
+ 
     prompt = (
-        f"Write a short, tailored cover-letter-style paragraph (120-180 words) "
-        f"for this listing: \"{listing['title']}\" at {listing['org']}.\n"
-        f"Candidate's goal: \"{profile['northstar']}\"\n"
-        f"Candidate's skills: \"{profile.get('skills', '')}\"\n"
-        "Be concrete and specific, no generic filler, no placeholder brackets."
+        "\n".join(context_lines) + "\n\n"
+        "Write a short, genuinely specific cover-letter-style paragraph (120-180 words) for this application.\n\n"
+        "What makes this good, not generic:\n"
+        "- Open with something concrete tied to what this specific posting actually says it needs - never a "
+        'generic opener like "I am writing to express my interest" or "I am excited to apply for".\n'
+        "- Connect the candidate's real stated skills and goal to what THIS role specifically needs - use the "
+        "actual overlap identified above rather than just restating a generic skills list.\n"
+        "- Never invent a specific accomplishment, project, metric, company name, or experience the "
+        "candidate didn't actually state here. This may be submitted to a real employer representing a real "
+        "person - vague but honest beats specific but fabricated.\n"
+        '- Avoid AI-cover-letter cliches: no "passionate", "dynamic", "leverage my skills", "I am confident '
+        'that", "perfect fit", "I believe I would be a great asset". Write like a specific person actually '
+        "wrote this, not a template.\n"
+        '- No placeholder brackets, no generic filler, no closing like "I look forward to hearing from you" '
+        "unless it says something more specific than that.\n\n"
+        "Return ONLY the paragraph text, nothing else."
     )
     resp = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
