@@ -4,7 +4,7 @@ from pydantic import BaseModel
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
-from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, compute_roadmap_alignment, get_personalized_factor_weights
+from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, get_personalized_factor_weights
  
 router = APIRouter(prefix="/listings", tags=["listings"])
  
@@ -47,9 +47,14 @@ def _listing_to_dict(l: Listing) -> dict:
 @router.get("/matches/{user_id}")
 def get_matches(user_id: str, db: Session = Depends(get_db)):
     """Returns the current top-ranked listings for a user, scored live
-    against whatever's currently in the listings table. Every match
-    includes a roadmap_alignment field (free, instant) showing which
-    stage of the user's plan it advances, if any.
+    against whatever's currently in the listings table. Roadmap
+    alignment is a real, graded factor baked directly into the score
+    itself now, not just a decorative field shown alongside a number
+    it never influenced - a listing that clearly advances the user's
+    current roadmap stage genuinely ranks higher than an otherwise-
+    identical one that doesn't. The specific stage/milestone matched
+    is still surfaced per-listing via factors.roadmap_alignment, for
+    explanation and UI display.
     """
     profile = (
         db.query(Profile)
@@ -95,14 +100,6 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     ]
     factor_weights = get_personalized_factor_weights(factor_learning_input)
  
-    ranked, near_misses = rank_listings_with_near_misses(
-        [_listing_to_dict(l) for l in listings],
-        _profile_to_dict(profile),
-        top_n=10,
-        tag_weights=tag_weights,
-        factor_weights=factor_weights,
-    )
- 
     milestones = (
         db.query(RoadmapMilestone)
         .filter(RoadmapMilestone.user_id == user_id)
@@ -110,8 +107,15 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
         .all()
     )
     milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
-    for listing in ranked:
-        listing["roadmap_alignment"] = compute_roadmap_alignment(listing, milestone_dicts)
+ 
+    ranked, near_misses = rank_listings_with_near_misses(
+        [_listing_to_dict(l) for l in listings],
+        _profile_to_dict(profile),
+        top_n=10,
+        tag_weights=tag_weights,
+        factor_weights=factor_weights,
+        roadmap_milestones=milestone_dicts,
+    )
  
     low_match_note = None
     if len(ranked) == 0:
