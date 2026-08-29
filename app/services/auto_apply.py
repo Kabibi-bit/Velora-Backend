@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
  
 DEFAULT_CONFIDENCE_THRESHOLD = int(os.getenv("AUTO_APPLY_THRESHOLD", "80"))
 UNDO_WINDOW_MINUTES = int(os.getenv("UNDO_WINDOW_MINUTES", "30"))
-ROADMAP_ALIGNMENT_BONUS = 8  # points added to composite confidence if the listing clearly advances a roadmap stage
  
  
 def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
@@ -40,16 +39,18 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
     return "".join(b.text for b in resp.content if b.type == "text").strip()
  
  
-def compute_composite_confidence(match_score_pct: float, roadmap_aligned: bool) -> int:
-    """The improved confidence signal: raw match score, boosted if the
-    listing clearly advances a specific roadmap stage. A 70%-match
-    listing that advances your roadmap is a better auto-send candidate
-    than an 82%-match listing that doesn't connect to your plan at all -
-    this is what makes the decision actually grounded in the roadmap,
-    not just keyword overlap.
+def compute_composite_confidence(match_score_pct: float) -> int:
+    """Roadmap alignment used to need a separate bonus here, because
+    match_score_pct never reflected it at all - it was purely
+    decorative metadata shown alongside a score it had zero
+    influence over. Now that matching.py's score_listing() bakes
+    roadmap_fit in as a real, graded factor (see roadmap_fit and
+    ROADMAP_ALIGNMENT_BONUS's removal), match_score_pct already
+    carries that signal honestly. This function is now a clean
+    pass-through, kept as its own function so future confidence
+    adjustments have one clear place to live.
     """
-    composite = match_score_pct + (ROADMAP_ALIGNMENT_BONUS if roadmap_aligned else 0)
-    return min(100, round(composite))
+    return min(100, round(match_score_pct))
  
  
 def decide_auto_send(confidence_pct: float, threshold: int | None = None) -> str:
@@ -76,7 +77,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     the result, or a dict with an 'error' key if it couldn't run.
     """
     from app.models.db_models import Profile, Listing, Application, RoadmapMilestone, Outcome
-    from app.services.matching import score_listing, compute_roadmap_alignment, get_personalized_factor_weights
+    from app.services.matching import score_listing, get_personalized_factor_weights
  
     profile = (
         db.query(Profile)
@@ -125,7 +126,15 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         "embedding": list(listing.embedding) if listing.embedding is not None else None,
     }
  
-    match_no_personalization = score_listing(listing_dict, profile_dict)
+    milestones = (
+        db.query(RoadmapMilestone)
+        .filter(RoadmapMilestone.user_id == user_id)
+        .order_by(RoadmapMilestone.target_stage)
+        .all()
+    )
+    milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
+ 
+    match_no_personalization = score_listing(listing_dict, profile_dict, roadmap_milestones=milestone_dicts)
     if match_no_personalization is None:
         return {"error": "dealbreaker_conflict"}
  
@@ -150,18 +159,16 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         if str(a.listing_id) in outcome_status_by_listing
     ]
     factor_weights = get_personalized_factor_weights(factor_learning_input)
-    match = score_listing(listing_dict, profile_dict, factor_weights=factor_weights) or match_no_personalization
+    match = score_listing(listing_dict, profile_dict, factor_weights=factor_weights, roadmap_milestones=milestone_dicts) or match_no_personalization
  
-    milestones = (
-        db.query(RoadmapMilestone)
-        .filter(RoadmapMilestone.user_id == user_id)
-        .order_by(RoadmapMilestone.target_stage)
-        .all()
-    )
-    milestone_dicts = [{"stage": m.target_stage, "title": m.title, "description": m.description} for m in milestones]
-    alignment = compute_roadmap_alignment(listing_dict, milestone_dicts)
-    composite_confidence = compute_composite_confidence(match["score_pct"], roadmap_aligned=alignment is not None)
-    counterfactual_confidence = compute_composite_confidence(match_no_personalization["score_pct"], roadmap_aligned=alignment is not None)
+    # Roadmap alignment is now a real, graded factor baked directly
+    # into score_pct itself (see matching.py's roadmap_fit) - no
+    # separate bonus needed here anymore. The old version added a
+    # flat +8 on top of a score_pct that never reflected roadmap
+    # alignment at all; keeping that bonus now that score_pct
+    # genuinely includes it would double-count the same signal.
+    composite_confidence = compute_composite_confidence(match["score_pct"])
+    counterfactual_confidence = compute_composite_confidence(match_no_personalization["score_pct"])
  
     draft_text = draft_application(anthropic_client, listing_dict, profile_dict)
     user_threshold = profile.auto_apply_threshold if getattr(profile, "auto_apply_threshold", None) else None
@@ -185,7 +192,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     return {
         "application_id": str(app_record.id),
         "match_score": match["score_pct"],
-        "roadmap_aligned": alignment is not None,
+        "roadmap_aligned": match["factors"].get("roadmap_alignment") is not None,
         "composite_confidence": composite_confidence,
         "status": status,
         "draft": draft_text,
