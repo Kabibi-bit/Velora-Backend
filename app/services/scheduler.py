@@ -32,7 +32,7 @@ from app.models.db_models import User, Profile, Listing, MatchScore
 from app.services.ingestion import (
     fetch_adzuna, normalize_adzuna, dedupe_listings, extract_tags,
     fetch_simplify_internships, parse_simplify_markdown,
-    discover_scholarships_via_search, normalize_scholarship_from_search,
+    discover_scholarships_via_search, normalize_scholarship_from_search, _scholarship_passes_quality_check,
     fetch_athletic_career_jobs, normalize_athletic_job,
 )
 from app.services.matching import rank_listings
@@ -157,7 +157,18 @@ async def _pull_and_store_new_listings(db: Session):
         all_scholarship_raw = []
         for q in SCHOLARSHIP_SEARCH_QUERIES:
             all_scholarship_raw.extend(await discover_scholarships_via_search(anthropic_client, q))
-        scholarship_normalized = [normalize_scholarship_from_search(r) for r in all_scholarship_raw]
+        # Real, visible rejection reasons rather than silently
+        # discarding them - the same "make it visible, not silent"
+        # principle already applied to candidate match transparency
+        # elsewhere in this app.
+        accepted_raw = []
+        for r in all_scholarship_raw:
+            passes, reason = _scholarship_passes_quality_check(r)
+            if passes:
+                accepted_raw.append(r)
+            else:
+                print(f"Scholarship quality gate rejected \"{r.get('title', '(no title)')}\": {reason}")
+        scholarship_normalized = [normalize_scholarship_from_search(r) for r in accepted_raw]
         scholarship_normalized = dedupe_listings([r for r in scholarship_normalized if r is not None])
         for item in scholarship_normalized:
             exists = (
