@@ -64,11 +64,34 @@ def tokenize(text: str) -> list[str]:
     return tokens
  
  
+def _word_boundary_contains(haystack: str, needle: str) -> bool:
+    if not needle:
+        return False
+    return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+ 
+ 
 def _terms_match(a: str, b: str) -> bool:
-    """True if two terms are the same, one contains the other, or
-    they belong to the same curated synonym group.
+    """True if two terms are the same, one contains the other as a
+    genuine whole word, or they belong to the same curated synonym
+    group.
+ 
+    Found via testing the roadmap-alignment integration, but the bug
+    reached far further: the old plain `a in b or b in a` substring
+    check had zero word-boundary awareness, so any short common word
+    embedded in a longer, unrelated term produced a false match -
+    "and" is a literal substring of "brand"/"branding" (br-AND-ing),
+    "at" is a substring of "data" - and "java" is a genuine substring
+    of "javascript" despite being different languages. Since this
+    function is what goal_fit and skill_fit are built on, this wasn't
+    a narrow issue - it could silently inflate or misattribute the
+    two most important scoring factors in the whole engine, for any
+    profile whose free text happened to contain a short common word.
+    Fixed with the same word-boundary principle already used for the
+    dealbreaker fix (_has_dealbreaker).
     """
-    if a in b or b in a:
+    if a == b:
+        return True
+    if _word_boundary_contains(a, b) or _word_boundary_contains(b, a):
         return True
     a_clean, b_clean = a.replace("-", ""), b.replace("-", "")
     group_a = _SYNONYM_LOOKUP.get(a_clean)
