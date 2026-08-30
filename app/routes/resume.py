@@ -226,3 +226,32 @@ def get_skills_section(user_id: str, db: Session = Depends(get_db)):
     profile_dict = {"skills": profile.skills if profile else ""}
     return build_skills_section(profile_dict, entry_dicts)
  
+ 
+class SkillAddIn(BaseModel):
+    skill: str
+ 
+ 
+@router.post("/{user_id}/skills/add")
+def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db)):
+    """The only sanctioned way a suggested_additions entry moves into
+    the person's explicit, claimed skills list - a deliberate action
+    on a specific skill, never an automatic promotion. There's no
+    general profile-edit endpoint elsewhere in this codebase; this is
+    intentionally narrow (just this one field, just this one
+    operation) rather than a broader endpoint this UI action doesn't
+    need. Returns the freshly recomputed skills section so the caller
+    can re-render immediately without a second round trip.
+    """
+    from app.services.resume_builder import add_skill_to_skills_string, build_skills_section
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile found for this user")
+ 
+    profile.skills = add_skill_to_skills_string(profile.skills, body.skill)
+    db.commit()
+ 
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    entry_dicts = [{"raw_description": e.raw_description} for e in entries]
+    return build_skills_section({"skills": profile.skills}, entry_dicts)
+ 
