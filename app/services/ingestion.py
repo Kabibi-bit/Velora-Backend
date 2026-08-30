@@ -13,6 +13,44 @@ from datetime import date
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
  
+# Verified against Adzuna's actual, current documentation rather than
+# assumed: the free tier is roughly 1,000 calls a month, about 33 a
+# day. This app's own ingestion pipeline makes 13 job queries + 6
+# athletic queries = 19 real Adzuna calls in a single scan - leaving
+# very little headroom for a manual "check now" trigger on top of the
+# scheduled daily scan without genuinely risking exceeding the real
+# quota. Set a few calls below the ~33/day estimate since "roughly
+# 1,000/month" is an approximation, not a guaranteed precise number.
+ADZUNA_DAILY_CALL_LIMIT = 30
+ 
+ 
+def check_and_reserve_quota(db, api_name: str, calls_needed: int, daily_limit: int) -> int:
+    """Checks how many of the requested calls_needed can actually be
+    made today without exceeding daily_limit for this specific API,
+    reserving (incrementing the tracked count for) only that many -
+    never silently exceeding a real, external rate limit just because
+    the code wanted to make more calls than the budget allows.
+ 
+    Returns the number of calls actually reserved (0 to calls_needed).
+    The caller should only make this many calls, not the full
+    requested amount, if the budget is already partially or fully
+    consumed by an earlier call today (the scheduled scan, a manual
+    trigger, or anything else sharing this same api_name).
+    """
+    from app.models.db_models import ApiQuotaTracker
+    today = date.today().isoformat()
+    tracker = db.query(ApiQuotaTracker).filter(ApiQuotaTracker.api_name == api_name, ApiQuotaTracker.date == today).first()
+    current_count = tracker.call_count if tracker else 0
+    available = max(0, daily_limit - current_count)
+    reserved = min(calls_needed, available)
+    if reserved > 0:
+        if tracker:
+            tracker.call_count += reserved
+        else:
+            db.add(ApiQuotaTracker(api_name=api_name, date=today, call_count=reserved))
+        db.commit()
+    return reserved
+ 
  
 async def fetch_adzuna(query: str, location: str = "us", page: int = 1) -> list[dict]:
     """results_per_page raised from Adzuna's common default of 20 to
@@ -74,13 +112,21 @@ ATHLETIC_CAREER_QUERIES = [
 ]
  
  
-async def fetch_athletic_career_jobs(location: str = "us") -> list[dict]:
+async def fetch_athletic_career_jobs(location: str = "us", max_queries: int | None = None) -> list[dict]:
     """Pulls real sporting-career job listings from Adzuna - the same
     connection already used for general jobs, just queried with
     sports-specific terms. This is real data, not mocked.
+ 
+    max_queries caps how many of ATHLETIC_CAREER_QUERIES actually get
+    called - None (the default) means all of them, preserving
+    existing behavior for any caller that doesn't need quota
+    awareness. Callers sharing a real, limited daily call budget
+    across multiple query sources (see check_and_reserve_quota) pass
+    a specific number instead.
     """
+    queries = ATHLETIC_CAREER_QUERIES if max_queries is None else ATHLETIC_CAREER_QUERIES[:max_queries]
     all_results = []
-    for query in ATHLETIC_CAREER_QUERIES:
+    for query in queries:
         try:
             results = await fetch_adzuna(query, location=location)
             all_results.extend(results)
