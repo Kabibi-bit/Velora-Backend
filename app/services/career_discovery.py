@@ -7,6 +7,15 @@ the deep explanation is a genuine Claude call grounded in the
 person's actual answers, not a canned description per direction.
 """
 import re
+from app.services.matching import _word_boundary_contains
+ 
+# Words too broad and common to be treated as meaningful when they
+# happen to be a literal prefix of a tag (see the prefix rule in
+# score_career_directions below) - found via sweeping common words
+# against every real tag: "people" genuinely prefixes "peopleops"
+# but is generic enough to apply to nearly any people-facing role,
+# not specifically HR.
+_GENERIC_PREFIX_EXCLUSIONS = {"people", "team", "work", "help", "time", "life", "good", "great", "thing", "love", "like"}
  
 CAREER_DIRECTIONS = [
     {"id": "product-strategy", "title": "Product & Business Strategy", "description": "Deciding what gets built and why - balancing user needs, data, and business goals.", "dims": {"people": 2, "data": 2, "creative": 1, "structure": 2}, "listing_tags": ["product", "roadmap", "stakeholder", "strategy"]},
@@ -48,7 +57,43 @@ def score_career_directions(answers: dict, all_listing_tags: list[list[str]]) ->
         )
         max_diff = 12
         pct = round((1 - (dim_diff / max_diff)) * 100)
-        text_matches = [t for t in direction["listing_tags"] if any(tok in t or t in tok for tok in free_text_tokens)]
+        # Word-boundary match catches genuine whole-word matches and
+        # multi-word tags ("injury prevention"). The prefix check
+        # separately catches this file's compound tags
+        # (customersuccess, humanresources, businessdevelopment) -
+        # concatenated as single tokens elsewhere in this codebase
+        # too, so word-boundary matching alone can't recognize
+        # "customer" as a real word inside "customersuccess" the same
+        # way it correctly refuses to treat "brand" as a real word
+        # inside "branding". Minimum 4 characters and must start at
+        # position 0, not appear mid-tag - checked against every real
+        # tag in CAREER_DIRECTIONS before adding this, specifically
+        # to avoid recreating the exact class of bug this replaced:
+        # "event" matching inside "injury prevention" (via
+        # "prEVENTion") and "our" matching inside "humanresources"
+        # (via "resOURces") were both real, found by direct testing,
+        # and neither is a genuine prefix of its tag - only a
+        # substring buried mid-word - so this stays correctly
+        # excluded under the new rule.
+        #
+        # _GENERIC_PREFIX_EXCLUSIONS handles a separate, real problem
+        # found by sweeping common words against every tag: "people"
+        # is a genuine, literal prefix of "peopleops", but it's broad
+        # enough to apply to almost any people-facing role, not
+        # specifically HR - matching it would over-credit one
+        # direction just because of how its tag happens to be
+        # spelled, not because of real semantic specificity like
+        # "customer" genuinely has. A targeted exclusion, not a
+        # length threshold - raising the minimum length would have
+        # also excluded genuinely good matches like "client" (6
+        # chars, same length as "people").
+        def _tag_matches(tag, tok):
+            if _word_boundary_contains(tag, tok) or _word_boundary_contains(tok, tag):
+                return True
+            if len(tok) >= 4 and tok not in _GENERIC_PREFIX_EXCLUSIONS and tag.startswith(tok):
+                return True
+            return False
+        text_matches = [t for t in direction["listing_tags"] if any(_tag_matches(t, tok) for tok in free_text_tokens)]
         pct = min(97, pct + (len(text_matches) * 6))
         pct = max(20, pct)
         related_count = sum(1 for tags in all_listing_tags if any(t in direction["listing_tags"] for t in tags))
