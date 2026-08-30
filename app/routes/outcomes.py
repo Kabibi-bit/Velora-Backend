@@ -185,6 +185,8 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
         for a in applications
         if str(a.listing_id) in outcome_by_listing_status
     ]
+    from app.services.matching import get_interaction_readiness
     findings = compute_factor_interactions(app_input)
-    return {"findings": findings, "sample_size": len(app_input)}
+    readiness = get_interaction_readiness(app_input)
+    return {"findings": findings, "sample_size": len(app_input), "readiness": readiness}
  
