@@ -22,6 +22,25 @@ structure, resume conventions - never to add a fact, metric, or
 responsibility they didn't state themselves.
 """
 import re
+from app.services.matching import tokenize, _terms_match
+ 
+# Common connective/filler words that clear the 4+ character bar but
+# aren't genuine skill or domain keywords - without this, a stated
+# goal like "become a frontend engineer using JS" surfaces "become",
+# "engineer", and "using" as if they were missing skills, which isn't
+# actionable advice for anyone reviewing the ATS check.
+_STOPWORDS = {
+    "become", "engineer", "engineering", "using", "with", "work", "working",
+    "want", "goal", "into", "role", "roles", "career", "field", "someone",
+    "person", "years", "year", "experience", "focused", "break", "ship",
+    "features", "backed", "real", "help", "helping", "make", "making",
+    "build", "building", "learn", "learning", "have", "that", "this",
+    "from", "about", "their", "them", "they", "very", "more", "most",
+}
+ 
+ 
+def _meaningful_tokens(text: str) -> set[str]:
+    return {t for t in tokenize(text) if len(t) > 3 and t not in _STOPWORDS}
  
  
 def _find_fabricated_numbers(original: str, polished: str) -> list[str]:
@@ -107,4 +126,52 @@ def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]
         messages=[{"role": "user", "content": prompt}],
     )
     return "".join(b.text for b in resp.content if b.type == "text").strip()
+ 
+ 
+def check_ats_alignment(profile: dict, entries: list[dict]) -> dict:
+    """Real, deterministic keyword coverage check - does the resume's
+    actual content contain genuine overlap with what the person says
+    they're targeting? Reuses the exact same synonym-aware, word-
+    boundary-safe matching already proven in the core matching engine
+    (see matching.py's _terms_match), so a resume that says "js" and
+    a stated goal of "javascript" correctly recognize each other -
+    not just literal exact-string presence, and not the old unguarded
+    substring bug either (this inherits that fix automatically by
+    reusing the same function, rather than re-implementing matching
+    logic a second time with its own risk of drifting out of sync).
+    """
+    goal_and_skills = f"{profile.get('northstar', '')} {profile.get('skills', '')}"
+    target_tokens = sorted(_meaningful_tokens(goal_and_skills))
+    if not target_tokens:
+        return {"matched_keywords": [], "missing_keywords": [], "coverage_pct": 0}
+ 
+    resume_text = " ".join(f"{e.get('title', '')} {e.get('raw_description', '')}" for e in entries)
+    resume_tokens = set(tokenize(resume_text))
+ 
+    matched, missing = [], []
+    for t in target_tokens:
+        (matched if any(_terms_match(t, rt) for rt in resume_tokens) else missing).append(t)
+ 
+    coverage_pct = round(len(matched) / len(target_tokens) * 100)
+    return {"matched_keywords": matched, "missing_keywords": missing, "coverage_pct": coverage_pct}
+ 
+ 
+def rank_entries_for_listing(entries: list[dict], listing: dict) -> list[dict]:
+    """Which of the person's REAL entries are most worth leading with
+    for THIS specific listing - reuses the same synonym-aware term
+    matching, applied to real entry content instead of a goal string.
+    Never changes what an entry says, only how entries get ordered:
+    the honest content stays identical regardless of which job it's
+    being tailored for, only the emphasis (order) changes. Returns
+    entries sorted by real overlap, each annotated with which of the
+    listing's own tags it actually matched.
+    """
+    listing_tags = listing.get("tags", [])
+    scored = []
+    for e in entries:
+        entry_tokens = set(tokenize(f"{e.get('title', '')} {e.get('raw_description', '')}"))
+        matched_tags = [tag for tag in listing_tags if any(_terms_match(tag.lower(), t) for t in entry_tokens)]
+        scored.append({**e, "relevance_tags": matched_tags, "relevance_score": len(matched_tags)})
+    scored.sort(key=lambda e: e["relevance_score"], reverse=True)
+    return scored
  
