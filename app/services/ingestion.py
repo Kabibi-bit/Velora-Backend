@@ -31,6 +31,20 @@ def check_and_reserve_quota(db, api_name: str, calls_needed: int, daily_limit: i
     never silently exceeding a real, external rate limit just because
     the code wanted to make more calls than the budget allows.
  
+    Uses an atomic INSERT...ON CONFLICT UPDATE (upsert) to increment
+    the counter, not a python-level read-then-write. The read-then-
+    write version had a genuine race condition: if the scheduled scan
+    and a manual "check now" trigger fire close together, both could
+    read the same starting count, both conclude they have room, and
+    both proceed - silently exceeding the real daily limit on exactly
+    the day (two things calling on the same day) this protection
+    exists to handle. The atomic increment happens first (safe under
+    concurrency by construction, not by hoping two requests don't
+    overlap), then gets corrected back down after if it pushed the
+    total over budget - the increment itself is what needs to be
+    race-safe, not the "how much is left" check, which can happen
+    after the fact.
+ 
     Returns the number of calls actually reserved (0 to calls_needed).
     The caller should only make this many calls, not the full
     requested amount, if the budget is already partially or fully
@@ -38,17 +52,30 @@ def check_and_reserve_quota(db, api_name: str, calls_needed: int, daily_limit: i
     trigger, or anything else sharing this same api_name).
     """
     from app.models.db_models import ApiQuotaTracker
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+ 
     today = date.today().isoformat()
-    tracker = db.query(ApiQuotaTracker).filter(ApiQuotaTracker.api_name == api_name, ApiQuotaTracker.date == today).first()
-    current_count = tracker.call_count if tracker else 0
-    available = max(0, daily_limit - current_count)
-    reserved = min(calls_needed, available)
-    if reserved > 0:
-        if tracker:
-            tracker.call_count += reserved
-        else:
-            db.add(ApiQuotaTracker(api_name=api_name, date=today, call_count=reserved))
-        db.commit()
+ 
+    stmt = pg_insert(ApiQuotaTracker).values(api_name=api_name, date=today, call_count=calls_needed)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["api_name", "date"],
+        set_={"call_count": ApiQuotaTracker.call_count + calls_needed},
+    ).returning(ApiQuotaTracker.call_count)
+    new_total = db.execute(stmt).scalar()
+    db.commit()
+ 
+    if new_total <= daily_limit:
+        return calls_needed  # the full request fit within budget
+ 
+    over_by = new_total - daily_limit
+    reserved = max(0, calls_needed - over_by)
+    # Correct the tracked count back down to what was actually
+    # granted - never leave it reflecting more than the real reserved
+    # amount, or a later call this same day would be under-budgeted.
+    db.query(ApiQuotaTracker).filter(
+        ApiQuotaTracker.api_name == api_name, ApiQuotaTracker.date == today
+    ).update({"call_count": ApiQuotaTracker.call_count - (calls_needed - reserved)})
+    db.commit()
     return reserved
  
  
