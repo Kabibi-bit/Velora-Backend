@@ -105,11 +105,25 @@ async def _pull_and_store_new_listings(db: Session):
     regardless of what's already been consumed.
     """
     stored_count = 0
-    reserved_calls = check_and_reserve_quota(db, "adzuna", calls_needed=len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES), daily_limit=ADZUNA_DAILY_CALL_LIMIT)
-    job_query_budget = min(reserved_calls, len(JOB_SEARCH_QUERIES))
-    athletic_query_budget = reserved_calls - job_query_budget
-    if reserved_calls < len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES):
-        print(f"Adzuna daily quota reached or nearly reached - running {reserved_calls} of {len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES)} possible queries today ({job_query_budget} job, {athletic_query_budget} athletic).")
+    total_possible_queries = len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES)
+    reserved_calls = check_and_reserve_quota(db, "adzuna", calls_needed=total_possible_queries, daily_limit=ADZUNA_DAILY_CALL_LIMIT)
+    # Proportional split, not a hard job-queries-first priority - direct
+    # testing showed the hard-priority version completely zeroed out
+    # athletic queries any time reserved_calls fell at or below 13 (the
+    # job query count), which isn't a rare edge case: it's exactly what
+    # happens whenever a manual "check now" trigger runs on the same day
+    # the scheduled scan already consumed part of the daily budget - a
+    # completely ordinary usage pattern, not an extreme one. Proportional
+    # allocation means athletic listings keep getting refreshed at a
+    # reduced rate under a constrained budget instead of being the one
+    # source that silently stops updating.
+    if reserved_calls >= total_possible_queries:
+        job_query_budget, athletic_query_budget = len(JOB_SEARCH_QUERIES), len(ATHLETIC_CAREER_QUERIES)
+    else:
+        job_query_budget = min(round(reserved_calls * len(JOB_SEARCH_QUERIES) / total_possible_queries), reserved_calls)
+        athletic_query_budget = reserved_calls - job_query_budget
+    if reserved_calls < total_possible_queries:
+        print(f"Adzuna daily quota reached or nearly reached - running {reserved_calls} of {total_possible_queries} possible queries today ({job_query_budget} job, {athletic_query_budget} athletic).")
  
     # Source 1: Adzuna, for jobs - queried across every category in
     # JOB_SEARCH_QUERIES, not just one hardcoded term, then merged
@@ -338,4 +352,3 @@ def start_scheduler():
     scheduler.add_job(run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES)
     scheduler.start()
     return scheduler
- 
