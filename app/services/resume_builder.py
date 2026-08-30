@@ -40,11 +40,48 @@ _STOPWORDS = {
     "worked", "helped", "managed", "assisted", "performed", "provided",
     "responsible", "duties", "tasks", "position", "store", "organized",
     "ensured", "maintained", "conducted", "completed", "supported",
+    # Common irregular past-tense verbs - a real description almost
+    # always narrates what someone DID ("wrote", "led", "built",
+    # "grew", "sold"), and none of these are skills themselves, but
+    # they don't end in -ed/-ly so the suffix rule below can't catch
+    # them the way it catches regular verbs like "created"/"managed".
+    "wrote", "led", "built", "grew", "sold", "ran", "gave",
+    "took", "made", "found", "held", "kept", "left", "spent", "spoke",
+    "drove", "chose", "began", "brought", "taught", "bought", "caught",
+    "thought", "sought", "knew", "saw", "went", "came", "did", "said",
+    # Quantifiers and generic filler nouns - real, but not skills;
+    # neither ends in -ed/-ly so needed here separately.
+    "several", "multiple", "various", "many", "much", "some", "each",
+    "every", "team", "people", "company", "department", "quality",
+    # Prepositions/conjunctions found via testing - "while" and
+    # "across" both survived the -ed/-ly suffix rule (neither is a
+    # verb or adverb) despite clearly not being skills.
+    "while", "across", "through", "during", "within", "toward",
+    "against", "between", "before", "after",
 }
  
  
 def _meaningful_tokens(text: str) -> set[str]:
-    return {t for t in tokenize(text) if len(t) > 3 and t not in _STOPWORDS}
+    """Filters entry text down to plausible skill-suggestion
+    candidates. Enumerating every English verb and adverb that isn't
+    a skill is an endless list - "created", "improved", "quickly",
+    "successfully" all showed up as suggested "skills" in real
+    testing, none of them names of anything a person actually has.
+    Regular past-tense verbs end in -ed and adverbs end in -ly far
+    more reliably than any curated stopword list could keep up with,
+    and neither suffix appears at the end of a real skill name in
+    practice (verified against a broad list of common skills -
+    Python, SQL, Photoshop, accounting, forecasting, etc. - before
+    adding this, specifically because a structural rule risks
+    excluding something legitimate in a way a curated list doesn't).
+    Irregular verbs ("wrote", "led", "built") don't end in -ed, so
+    those stay in the explicit stopword list above instead.
+    """
+    return {
+        t for t in tokenize(text)
+        if len(t) > 3 and t not in _STOPWORDS
+        and not t.endswith("ed") and not t.endswith("ly")
+    }
  
  
 def _find_fabricated_numbers(original: str, polished: str) -> list[str]:
@@ -210,3 +247,25 @@ def build_skills_section(profile: dict, entries: list[dict]) -> dict:
  
     return {"skills": explicit_skills, "suggested_additions": suggested[:8]}
  
+ 
+def add_skill_to_skills_string(current_skills: str, new_skill: str) -> str:
+    """Appends a skill to the person's explicit, comma-separated
+    skills string - built specifically to support turning a
+    suggested_additions entry from build_skills_section into a real,
+    one-click action rather than a static, read-only list. This is
+    the ONLY sanctioned way a suggested skill moves into the explicit
+    list: the person clicking to confirm it, never an automatic
+    promotion. Case-insensitive duplicate check so "Python" doesn't
+    get added twice just because it's capitalized differently from
+    what's already there. Returns the string unchanged if the skill
+    (by any casing) is already present.
+    """
+    current_skills = current_skills or ""
+    new_skill = (new_skill or "").strip()
+    if not new_skill:
+        return current_skills
+    existing = [s.strip() for s in current_skills.split(",") if s.strip()]
+    if any(s.lower() == new_skill.lower() for s in existing):
+        return current_skills
+    existing.append(new_skill)
+    return ", ".join(existing)
