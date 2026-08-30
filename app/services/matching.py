@@ -324,6 +324,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     goal_fit, skill_fit = 0.0, 0.0
     matched_goal, matched_skill = [], []
     matched_tag_terms = set()
+    double_match_count = 0
     for tag in listing["tags"]:
         in_goal = any(_terms_match(t, tag) for t in goal_tokens)
         in_skill = any(_terms_match(t, tag) for t in skill_tokens)
@@ -335,6 +336,8 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
             skill_fit += 2
             matched_skill.append(tag)
             matched_tag_terms.add(tag.replace("-", ""))
+        if in_goal and in_skill:
+            double_match_count += 1
  
     priority_fit = 0.0
     if "learning" in priorities and listing["type"] in ("internship", "college"):
@@ -385,7 +388,37 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     description_headroom = description_fit
     semantic_headroom = semantic_fit
     roadmap_headroom = roadmap_fit
-    denom = len(listing["tags"]) * 3 + 2 + 1.5 + description_headroom + semantic_headroom + roadmap_headroom
+    # skill_fit's own headroom was missing here even though goal_fit's
+    # was always included (len(tags)*3), even though a tag matching
+    # both dimensions gets credited in the numerator for both.
+    #
+    # Two prior attempts before landing here, both tested and
+    # rejected before shipping: (1) adding skill_fit's full
+    # theoretical ceiling (len(tags)*2) unconditionally assumed an
+    # unrealistic ideal listing where every tag matches both goal and
+    # skill simultaneously, dragging genuinely good realistic matches
+    # to the scoring floor. (2) using skill_fit's own earned
+    # contribution as headroom - the same principle proven for
+    # description/semantic/roadmap - turned out not to apply here:
+    # that principle only holds when a factor is NEWLY added to both
+    # numerator and denominator together (true for semantic/roadmap,
+    # which don't exist without embeddings/a roadmap). skill_fit
+    # already existed in the numerator before this fix, so adding it
+    # to the denominator alone unconditionally lowered every score
+    # with meaningful skill_fit - including realistic cases where
+    # skill_fit is legitimately strong but goal_fit is weak or
+    # absent, which was never the actual bug.
+    #
+    # double_match_count (tags that hit BOTH dimensions, tracked
+    # during the tag loop above) targets only the real problem: a tag
+    # corroborating both goal and skill gets credited for both in the
+    # numerator, but the denominator only ever budgeted for the
+    # goal_fit half of that specific tag. Verified against a broad
+    # spread of realistic match-quality scenarios, including the
+    # specific skill-only and goal-only cases the first two attempts
+    # got wrong, before shipping.
+    skill_headroom = double_match_count * 2
+    denom = len(listing["tags"]) * 3 + 2 + 1.5 + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
     # How many INDEPENDENT signals actually agree, not just the
