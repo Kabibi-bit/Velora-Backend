@@ -322,3 +322,45 @@ class AthleteRoadmapSummary(Base):
     summary = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class ResumeEntry(Base):
+    """A single real, user-provided fact about their experience -
+    a job, an education entry, or a project. entry_type + title +
+    org + dates are all things the user states directly; raw_description
+    is their own plain-language account of what they did. The AI-
+    polish step (see app/services/resume_builder.py) is only ever
+    allowed to strengthen the PHRASING of raw_description into
+    resume-style language - never to add a fact, metric, or
+    achievement the user didn't put here themselves. This table is
+    the real source of truth a resume gets built from; nothing about
+    a person's work history is ever generated from scratch.
+    """
+    __tablename__ = "resume_entries"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    entry_type = Column(String, nullable=False)  # work / education / project
+    title = Column(String, nullable=False)  # job title, degree, or project name
+    org = Column(String)  # employer, school, or None for a personal project
+    start_date = Column(String)  # free text ("Jun 2024") - real dates people give are rarely full ISO dates
+    end_date = Column(String)  # free text, or "Present"
+    raw_description = Column(Text, nullable=False)  # the user's own plain-language account - never AI-generated
+    display_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
+class ResumeDocument(Base):
+    """The most recently generated resume for a user - polished
+    bullet points and a summary line, always traceable back to the
+    real ResumeEntry rows it was built from (entries_snapshot keeps
+    the exact raw_description text used, so a later edit to an entry
+    doesn't silently make an old generated resume look like it was
+    based on something the user never actually said).
+    """
+    __tablename__ = "resume_documents"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    summary_line = Column(Text)
+    polished_entries = Column(JSONB, nullable=False)  # [{entry_id, title, org, dates, bullets: [str]}]
+    entries_snapshot = Column(JSONB, nullable=False)  # raw_description text as it existed at generation time
+    generated_at = Column(DateTime, default=datetime.utcnow)
+ 
