@@ -36,6 +36,10 @@ _STOPWORDS = {
     "features", "backed", "real", "help", "helping", "make", "making",
     "build", "building", "learn", "learning", "have", "that", "this",
     "from", "about", "their", "them", "they", "very", "more", "most",
+    "used", "use", "uses", "daily", "regularly", "handled", "handle",
+    "worked", "helped", "managed", "assisted", "performed", "provided",
+    "responsible", "duties", "tasks", "position", "store", "organized",
+    "ensured", "maintained", "conducted", "completed", "supported",
 }
  
  
@@ -174,4 +178,35 @@ def rank_entries_for_listing(entries: list[dict], listing: dict) -> list[dict]:
         scored.append({**e, "relevance_tags": matched_tags, "relevance_score": len(matched_tags)})
     scored.sort(key=lambda e: e["relevance_score"], reverse=True)
     return scored
+ 
+ 
+def build_skills_section(profile: dict, entries: list[dict]) -> dict:
+    """The skills section a resume shows is a direct, bare claim -
+    "I have this skill" - with even less surrounding context than a
+    bullet point to qualify it. That makes it more fabrication-
+    sensitive, not less, so this only ever lists skills the person
+    explicitly typed as their own (profile.skills), cleaned and
+    deduplicated. Anything genuinely implied by their real entries but
+    not in that explicit list is surfaced separately as a suggestion
+    - never auto-added to the claimed list, since inferring a skill
+    from entry text is a meaningfully weaker claim than the person
+    stating it themselves, and the two shouldn't look identical on
+    the page.
+    """
+    raw_skills = profile.get("skills", "") or ""
+    seen_lower = set()
+    explicit_skills = []
+    for s in raw_skills.split(","):
+        s = s.strip()
+        if s and s.lower() not in seen_lower:
+            seen_lower.add(s.lower())
+            explicit_skills.append(s)
+    explicit_skills.sort(key=str.lower)
+ 
+    entry_text = " ".join(e.get("raw_description", "") for e in entries)
+    entry_tokens = _meaningful_tokens(entry_text)
+    explicit_lower = {s.lower() for s in explicit_skills}
+    suggested = sorted(t for t in entry_tokens if not any(_terms_match(t, s) for s in explicit_lower))
+ 
+    return {"skills": explicit_skills, "suggested_additions": suggested[:8]}
  
