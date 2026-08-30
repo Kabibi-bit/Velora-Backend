@@ -921,11 +921,27 @@ def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[
     genuine synergy; meaningfully lower is redundancy/interference.
  
     Returns only pairs with enough real data to say something
-    concrete - never guesses from a thin sample.
+    concrete - never guesses from a thin sample. The per-pair bucket
+    minimums (both_high>=2, a_only>=2, b_only>=2) work together with
+    the confidence-shrinkage below, not as a separate, redundant
+    safeguard on top of it: even at the smallest allowed bucket size,
+    the shrinkage formula already requires a raw synergy of 0.45
+    (a dramatic, obvious effect) before anything crosses the 0.15
+    reporting threshold - verified by direct calculation before
+    lowering this gate. A weak or ambiguous pattern gets filtered by
+    the math itself regardless of how low the gate is set; the gate
+    only needs to ensure the buckets aren't so empty that "both
+    engaged" or "neither engaged" becomes a meaningless comparison,
+    which 2 per bucket already satisfies. The previous minimum of 8
+    total / 3 in the largest-required bucket meant this almost never
+    activated for a real user within a reasonable number of real
+    outcomes - not because the extra margin was doing meaningful
+    statistical work, but because it was more conservative than the
+    shrinkage already requires.
     """
     usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
-    if len(usable) < 8:
-        return []  # interaction effects need more data than single-factor learning to say anything real - honest to return nothing rather than guess
+    if len(usable) < 6:
+        return []  # below this, even the loosest possible pair (2+2+2) can't be assembled
  
     overall_positive = sum(1 for a in usable if a["outcome_status"] in POSITIVE_STATUSES)
     baseline_rate = overall_positive / len(usable)
@@ -939,7 +955,7 @@ def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[
         a_only = [a for a in usable if engaged(a, factor_a) and not engaged(a, factor_b)]
         b_only = [a for a in usable if not engaged(a, factor_a) and engaged(a, factor_b)]
  
-        if len(both_high) < 3 or len(a_only) < 2 or len(b_only) < 2:
+        if len(both_high) < 2 or len(a_only) < 2 or len(b_only) < 2:
             continue  # not enough real data in each bucket to say anything concrete about this pair
  
         def positive_rate(apps):
