@@ -925,3 +925,4 @@ def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[
             })
  
     return findings
+ 
