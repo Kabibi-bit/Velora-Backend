@@ -345,7 +345,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     location_fit, location_reason = _location_fit_factor(listing, profile)
     deadline_urgency, days_left = _deadline_urgency_factor(listing)
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
-    semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"))
+    semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"), tag_count=len(listing["tags"]))
     roadmap_alignment = compute_roadmap_alignment(listing, roadmap_milestones) if roadmap_milestones else None
     roadmap_fit = round(roadmap_alignment["strength"] * 3.0, 2) if roadmap_alignment else 0.0
  
@@ -925,4 +925,3 @@ def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[
             })
  
     return findings
- 
