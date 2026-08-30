@@ -15,7 +15,17 @@ from app.services.matching import _word_boundary_contains
 # against every real tag: "people" genuinely prefixes "peopleops"
 # but is generic enough to apply to nearly any people-facing role,
 # not specifically HR.
-_GENERIC_PREFIX_EXCLUSIONS = {"people", "team", "work", "help", "time", "life", "good", "great", "thing", "love", "like"}
+_GENERIC_PREFIX_EXCLUSIONS = {
+    "people", "team", "work", "help", "time", "life", "good", "great", "thing", "love", "like",
+    # Found via a broader sweep against real listing tags (not just
+    # the curated 16-direction list): "lead" as a common job-title
+    # suffix ("Support Lead") doesn't genuinely mean "leadership" as
+    # an abstract trait, and "position" as a generic word for a job
+    # doesn't mean "positioning" as a specific marketing concept -
+    # both would have over-matched almost any listing tagged with
+    # the longer word, regardless of real relevance.
+    "lead", "position",
+}
  
 CAREER_DIRECTIONS = [
     {"id": "product-strategy", "title": "Product & Business Strategy", "description": "Deciding what gets built and why - balancing user needs, data, and business goals.", "dims": {"people": 2, "data": 2, "creative": 1, "structure": 2}, "listing_tags": ["product", "roadmap", "stakeholder", "strategy"]},
@@ -98,7 +108,17 @@ def score_career_directions(answers: dict, all_listing_tags: list[list[str]]) ->
         pct = max(20, pct)
         related_count = sum(1 for tags in all_listing_tags if any(t in direction["listing_tags"] for t in tags))
         results.append({**direction, "pct": pct, "text_matches": text_matches, "related_count": related_count})
-    return sorted(results, key=lambda d: -d["pct"])
+    # Secondary sort key on evidence count, not just pct - found a
+    # real tie in the curated data itself (Social Impact & Nonprofit
+    # and Sales & Business Development share identical dims values),
+    # which combined with the 97 ceiling meant two directions with
+    # genuinely different amounts of supporting free-text evidence
+    # could display the same score and then rank in arbitrary
+    # insertion order. This breaks ties using real evidence instead,
+    # without changing any displayed percentage - a person with more
+    # text_matches toward one direction sees it ranked first, not
+    # whichever happened to be defined earlier in the list.
+    return sorted(results, key=lambda d: (-d["pct"], -len(d["text_matches"])))
  
  
 def explain_direction_deep(anthropic_client, direction: dict, answers: dict) -> str:
