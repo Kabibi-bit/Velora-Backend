@@ -902,6 +902,37 @@ INTERACTION_PAIRS = [
 ]
  
  
+def get_interaction_readiness(applications_with_outcomes: list[dict]) -> list[dict]:
+    """Dormancy in compute_factor_interactions below is honest, but
+    was completely silent about WHY - a person could have 20 real
+    logged outcomes and still see nothing, with no way to tell
+    whether the blocker is simply not enough applications yet, or
+    something the gate can't fix by waiting: every application
+    happening to engage the same factors in the same way, so no
+    amount of additional volume would ever populate the other
+    buckets. This reports, per curated pair, exactly which bucket (if
+    any) is the actual bottleneck and how many more real outcomes in
+    that specific bucket would unlock it - turning silent dormancy
+    into something a person (or the UI) can actually act on.
+    """
+    usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
+    readiness = []
+    for label, factor_a, factor_b in INTERACTION_PAIRS:
+        def engaged(a, factor):
+            return (a["factors_snapshot"].get(factor) or 0) > 0
+        both_count = sum(1 for a in usable if engaged(a, factor_a) and engaged(a, factor_b))
+        a_only_count = sum(1 for a in usable if engaged(a, factor_a) and not engaged(a, factor_b))
+        b_only_count = sum(1 for a in usable if not engaged(a, factor_a) and engaged(a, factor_b))
+        readiness.append({
+            "pair": label,
+            "ready": both_count >= 2 and a_only_count >= 2 and b_only_count >= 2,
+            "both_engaged": {"count": both_count, "still_needed": max(0, 2 - both_count)},
+            f"{factor_a}_only": {"count": a_only_count, "still_needed": max(0, 2 - a_only_count)},
+            f"{factor_b}_only": {"count": b_only_count, "still_needed": max(0, 2 - b_only_count)},
+        })
+    return readiness
+ 
+ 
 def compute_factor_interactions(applications_with_outcomes: list[dict]) -> list[dict]:
     """Goes a real step beyond compute_factor_reliability: that
     function can only ever say whether a SINGLE factor category
