@@ -162,3 +162,49 @@ def get_resume(user_id: str, db: Session = Depends(get_db)):
         return {"summary_line": None, "entries": [], "generated_at": None}
     return {"summary_line": doc.summary_line, "entries": doc.polished_entries, "generated_at": doc.generated_at.isoformat() if doc.generated_at else None}
  
+ 
+@router.get("/{user_id}/ats-check")
+def get_ats_alignment(user_id: str, db: Session = Depends(get_db)):
+    """Real, deterministic keyword coverage between the resume's
+    actual content and the person's stated goal/skills - reuses the
+    same synonym-aware matching already proven in the core matching
+    engine, so this stays in sync with that fix rather than drifting
+    from a second, separately-maintained copy of the same logic.
+    """
+    from app.services.resume_builder import check_ats_alignment
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    entry_dicts = [{"title": e.title, "raw_description": e.raw_description} for e in entries]
+    profile_dict = {"northstar": profile.northstar if profile else "", "skills": profile.skills if profile else ""}
+    return check_ats_alignment(profile_dict, entry_dicts)
+ 
+ 
+@router.get("/{user_id}/tailor/{listing_id}")
+def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """Which of the person's real entries are most worth leading with
+    for this specific listing. Never changes what an entry says, only
+    how they're ordered - the honest content is identical regardless
+    of which job this is for.
+    """
+    from app.services.resume_builder import rank_entries_for_listing
+    from app.models.db_models import Listing
+ 
+    entries = (
+        db.query(ResumeEntry)
+        .filter(ResumeEntry.user_id == user_id)
+        .order_by(ResumeEntry.display_order, ResumeEntry.created_at)
+        .all()
+    )
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    entry_dicts = [
+        {"id": str(e.id), "title": e.title, "org": e.org, "start_date": e.start_date,
+         "end_date": e.end_date, "raw_description": e.raw_description}
+        for e in entries
+    ]
+    ranked = rank_entries_for_listing(entry_dicts, {"tags": listing.tags or []})
+    return {"entries": ranked}
+ 
