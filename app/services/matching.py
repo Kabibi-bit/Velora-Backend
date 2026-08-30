@@ -65,9 +65,28 @@ def tokenize(text: str) -> list[str]:
  
  
 def _word_boundary_contains(haystack: str, needle: str) -> bool:
+    """Manual boundary check rather than regex \\b - \\b relies on a
+    transition between a word character and a non-word character,
+    which silently fails for terms ending in punctuation. "c++" would
+    never be recognized as a whole word inside "c++ developer",
+    because both the trailing "+" and the following space are
+    non-word characters - no transition exists there for \\b to
+    detect, even though a person would obviously read that as the
+    same term. This checks explicitly: is the character on each side
+    of a match (if any) non-alphanumeric, regardless of what specific
+    character it is.
+    """
     if not needle:
         return False
-    return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+    idx = haystack.find(needle)
+    while idx != -1:
+        before_ok = idx == 0 or not haystack[idx - 1].isalnum()
+        after_idx = idx + len(needle)
+        after_ok = after_idx == len(haystack) or not haystack[after_idx].isalnum()
+        if before_ok and after_ok:
+            return True
+        idx = haystack.find(needle, idx + 1)
+    return False
  
  
 def _terms_match(a: str, b: str) -> bool:
@@ -186,8 +205,18 @@ def _description_overlap_factor(listing: dict, goal_tokens: list[str], skill_tok
     the title, never in tags or description, was completely invisible
     to this factor) - catching real signal the compression step lost,
     without needing a paid AI call for every listing in every scan.
+ 
+    Description text is capped at 4000 characters before scanning -
+    found via stress-testing against realistic long postings (real
+    aggregated listings can run 10,000+ characters once legal
+    boilerplate and benefits sections are included). This function
+    runs once per listing per candidate on every scan cycle, so
+    tokenizing the full text every time is real, avoidable
+    computational cost for signal that's overwhelmingly concentrated
+    in the requirements/responsibilities section near the top of a
+    real posting, not buried in the boilerplate at the end.
     """
-    combined_text = f"{listing.get('title') or ''} {listing.get('description') or ''}".lower()
+    combined_text = f"{listing.get('title') or ''} {(listing.get('description') or '')[:4000]}".lower()
     if not combined_text.strip():
         return 0.0, []
     desc_tokens = set(tokenize(combined_text))
