@@ -418,7 +418,23 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # specific skill-only and goal-only cases the first two attempts
     # got wrong, before shipping.
     skill_headroom = double_match_count * 2
-    denom = len(listing["tags"]) * 3 + 2 + 1.5 + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
+    # priority_fit's real ceiling is 1.5, not 2 - its two branches
+    # ("learning" for internship/college, "pay" for job) are mutually
+    # exclusive per listing type, so only one can ever fire for any
+    # single listing, and this is always potentially achievable
+    # regardless of the specific listing's data. location_fit and
+    # deadline_urgency are different: their ceilings only apply when
+    # the listing actually HAS a location or deadline field to
+    # possibly match against - budgeting a flat 3.0 for both
+    # unconditionally repeated the exact mistake already learned from
+    # with the first skill_fit attempt (assuming an unrealistic ideal
+    # every listing could reach), and directly caused a real,
+    # verified regression: a listing with neither field populated
+    # dropped from a passing score to just below the quality gate,
+    # for headroom it could never have earned in the first place.
+    location_headroom = 1.5 if listing.get("location") else 0.0
+    deadline_headroom = 1.5 if listing.get("deadline") else 0.0
+    denom = len(listing["tags"]) * 3 + 1.5 + location_headroom + deadline_headroom + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
     # How many INDEPENDENT signals actually agree, not just the
