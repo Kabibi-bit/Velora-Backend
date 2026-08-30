@@ -5,6 +5,7 @@ and a matching normalize_* function, then registering both below.
 """
 import os
 import re
+import html
 import hashlib
 import httpx
 from datetime import date
@@ -34,14 +35,21 @@ async def fetch_adzuna(query: str, location: str = "us", page: int = 1) -> list[
  
  
 def normalize_adzuna(raw: dict) -> dict:
+    """HTML-entity decoding on title/org/description - found by
+    stress-testing against realistic messy data rather than clean
+    constructed listings: real aggregated postings routinely contain
+    literal entities like "&amp;" (any company with "&" in its real
+    name - AT&T, Procter & Gamble - would otherwise display as
+    "AT&amp;T" verbatim to a real user).
+    """
     return {
         "source": "adzuna",
         "external_id": str(raw.get("id")),
-        "title": raw.get("title", "").strip(),
-        "org": (raw.get("company") or {}).get("display_name", "Unknown"),
+        "title": html.unescape(raw.get("title", "")).strip(),
+        "org": html.unescape((raw.get("company") or {}).get("display_name", "Unknown")),
         "type": "job",  # Adzuna doesn't distinguish internships; refine via title keywords
         "location": (raw.get("location") or {}).get("display_name"),
-        "description": raw.get("description", ""),
+        "description": html.unescape(raw.get("description", "")),
         "apply_url": raw.get("redirect_url"),
         "tags": [],  # populate via extract_tags()
         "deadline": None,  # Adzuna doesn't provide deadlines
