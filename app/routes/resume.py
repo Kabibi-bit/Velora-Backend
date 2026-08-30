@@ -208,3 +208,21 @@ def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depen
     ranked = rank_entries_for_listing(entry_dicts, {"tags": listing.tags or []})
     return {"entries": ranked}
  
+ 
+@router.get("/{user_id}/skills")
+def get_skills_section(user_id: str, db: Session = Depends(get_db)):
+    """Only ever lists skills the person explicitly typed as their
+    own; anything genuinely implied by their real entries but not
+    already in that list comes back separately as a suggestion, never
+    auto-added to the claimed list. See build_skills_section's
+    docstring for why a skills section is more fabrication-sensitive
+    than a bullet point, not less.
+    """
+    from app.services.resume_builder import build_skills_section
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    entry_dicts = [{"raw_description": e.raw_description} for e in entries]
+    profile_dict = {"skills": profile.skills if profile else ""}
+    return build_skills_section(profile_dict, entry_dicts)
+ 
