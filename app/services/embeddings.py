@@ -64,12 +64,29 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return dot / (mag_a * mag_b)
  
  
-def semantic_similarity_factor(listing_embedding: list[float] | None, profile_embedding: list[float] | None) -> float:
-    """Converts a cosine similarity into a scoring contribution
-    comparable in scale to the existing goal_fit/skill_fit factors
-    (roughly 0-4 range at typical similarity values). Returns 0.0
-    (no contribution, not an error) whenever either embedding is
-    missing - the honest degrade-gracefully path.
+def semantic_similarity_factor(listing_embedding: list[float] | None, profile_embedding: list[float] | None, tag_count: int = 4) -> float:
+    """Converts a cosine similarity into a scoring contribution.
+ 
+    The cap scales with tag_count (at goal_fit's own per-tag rate,
+    verified by direct calculation - not just a number that sounded
+    proportional: an earlier, more conservative multiplier looked
+    reasonable but a maxed-out semantic score still landed at the
+    scoring floor when actually computed through the full formula)
+    rather than staying flat at 4.0. Found by directly testing a
+    real, verified-zero-overlap scenario: a listing whose tags share
+    literally no tokens with the stated goal, but whose embedding is
+    a near-perfect semantic match (cosine similarity high enough to
+    rescale to a maxed-out contribution) still landed at the scoring
+    floor under the old flat cap, because goal_fit's denominator term
+    (len(tags)*3) scales with tag count while semantic_fit's ceiling
+    never did - the richer the listing's tag set, the more thoroughly
+    a maxed-out semantic signal got drowned out, precisely in the
+    scenario the curated synonym system's coverage gaps make this
+    factor exist for in the first place. Floors at 4.0 so thin-tag
+    listings aren't made worse off than before.
+ 
+    Returns 0.0 (no contribution, not an error) whenever either
+    embedding is missing - the honest degrade-gracefully path.
  
     Real embeddings rarely score below ~0.3 cosine similarity even
     for loosely related text, so this rescales the practically
@@ -80,5 +97,6 @@ def semantic_similarity_factor(listing_embedding: list[float] | None, profile_em
         return 0.0
     similarity = cosine_similarity(listing_embedding, profile_embedding)
     rescaled = max(0.0, min(1.0, (similarity - 0.3) / 0.6))  # 0.3->0.0, 0.9->1.0, capped both ends
-    return round(rescaled * 4.0, 2)
+    cap = max(4.0, tag_count * 4.0)
+    return round(rescaled * cap, 2)
  
