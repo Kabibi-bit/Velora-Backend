@@ -695,12 +695,26 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
         if a.get("counterfactual_confidence_pct") is not None
         and abs(float(a["confidence_pct"]) - float(a["counterfactual_confidence_pct"])) >= 3
     ]
-    if len(comparable) < 4:
-        return {"verdict": "insufficient_data", "sample_size": len(comparable), "note": "Not enough applications yet where personalization actually changed the score by a meaningful amount - need at least 4 to draw a real conclusion."}
+    if len(comparable) < 3:
+        return {"verdict": "insufficient_data", "sample_size": len(comparable), "note": f"Not enough applications yet where personalization actually changed the score by a meaningful amount - need at least 3 to draw a real conclusion, have {len(comparable)}."}
  
     personalized_loss = sum(loss(float(a["confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
     baseline_loss = sum(loss(float(a["counterfactual_confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
-    improvement = baseline_loss - personalized_loss  # positive = personalization reduced error (helping)
+    raw_improvement = baseline_loss - personalized_loss  # positive = personalization reduced error (helping)
+ 
+    # Confidence-shrink by sample size before deciding the verdict -
+    # this function had no protection against small-sample noise
+    # beyond the hard gate above, unlike compute_factor_interactions
+    # elsewhere in this file, which already had this exact mechanism
+    # doing the real statistical work under a technically-redundant
+    # hard gate. Here there was no shrinkage at all, so the hard gate
+    # WAS the only real protection - meaning it couldn't be safely
+    # lowered without adding this first. n/(n+3) matches
+    # compute_factor_reliability's constant, the closest conceptual
+    # sibling (both assess a single learned signal against a
+    # person's own outcome history, not a combination of two).
+    confidence = len(comparable) / (len(comparable) + 3)
+    improvement = raw_improvement * confidence
  
     if improvement > 3:
         verdict = "helping"
