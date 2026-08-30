@@ -33,7 +33,8 @@ from app.services.ingestion import (
     fetch_adzuna, normalize_adzuna, dedupe_listings, extract_tags,
     fetch_simplify_internships, parse_simplify_markdown,
     discover_scholarships_via_search, normalize_scholarship_from_search, _scholarship_passes_quality_check,
-    fetch_athletic_career_jobs, normalize_athletic_job,
+    fetch_athletic_career_jobs, normalize_athletic_job, ATHLETIC_CAREER_QUERIES,
+    check_and_reserve_quota, ADZUNA_DAILY_CALL_LIMIT,
 )
 from app.services.matching import rank_listings
 from app.services.embeddings import generate_embedding
@@ -92,15 +93,30 @@ async def _pull_and_store_new_listings(db: Session):
     overall - a single hardcoded "internship" query meant entire real
     career categories were never being pulled at all, regardless of
     how good the downstream matching got.
+ 
+    Adzuna's real free tier is roughly 1,000 calls a month (about 33
+    a day, verified against their actual current documentation) - the
+    13 job queries + 6 athletic queries this function can make (19
+    total) leave very little headroom for a manual "check now"
+    trigger on the same day as the scheduled scan without genuinely
+    risking exceeding that real quota. check_and_reserve_quota below
+    tracks real daily usage and gracefully limits how many of these
+    queries actually run today, rather than blindly firing all 19
+    regardless of what's already been consumed.
     """
     stored_count = 0
+    reserved_calls = check_and_reserve_quota(db, "adzuna", calls_needed=len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES), daily_limit=ADZUNA_DAILY_CALL_LIMIT)
+    job_query_budget = min(reserved_calls, len(JOB_SEARCH_QUERIES))
+    athletic_query_budget = reserved_calls - job_query_budget
+    if reserved_calls < len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES):
+        print(f"Adzuna daily quota reached or nearly reached - running {reserved_calls} of {len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES)} possible queries today ({job_query_budget} job, {athletic_query_budget} athletic).")
  
     # Source 1: Adzuna, for jobs - queried across every category in
     # JOB_SEARCH_QUERIES, not just one hardcoded term, then merged
     # and deduped by (source, external_id) before any DB writes or
     # paid tag-extraction calls happen on a listing twice.
     all_adzuna_raw = []
-    for q in JOB_SEARCH_QUERIES:
+    for q in JOB_SEARCH_QUERIES[:job_query_budget]:
         all_adzuna_raw.extend(await fetch_adzuna(q))
     adzuna_normalized = dedupe_listings([normalize_adzuna(r) for r in all_adzuna_raw])
     for item in adzuna_normalized:
@@ -195,7 +211,7 @@ async def _pull_and_store_new_listings(db: Session):
     # is the honest alternative to a dedicated athletic scholarship API,
     # which doesn't exist as a free public service.
     try:
-        raw_athletic = await fetch_athletic_career_jobs()
+        raw_athletic = await fetch_athletic_career_jobs(max_queries=athletic_query_budget)
         athletic_normalized = dedupe_listings([normalize_athletic_job(r) for r in raw_athletic])
         for item in athletic_normalized:
             exists = (
