@@ -364,3 +364,20 @@ class ResumeDocument(Base):
     entries_snapshot = Column(JSONB, nullable=False)  # raw_description text as it existed at generation time
     generated_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class ApiQuotaTracker(Base):
+    """Tracks real daily call volume against a specific external
+    API's documented rate limit - built after actually checking
+    Adzuna's real, current free-tier terms (roughly 1,000 calls a
+    month, about 33 a day) rather than assuming the ingestion
+    pipeline's call volume was safely within some unverified "should
+    be fine" range. One row per (api_name, date); see
+    app/services/ingestion.py's check_and_reserve_quota for how this
+    gets used to gracefully skip rather than blindly exceed a real,
+    external limit.
+    """
+    __tablename__ = "api_quota_tracker"
+    api_name = Column(String, primary_key=True)
+    date = Column(String, primary_key=True)  # YYYY-MM-DD, not a DateTime - this is a daily bucket key, not a timestamp
+    call_count = Column(Integer, default=0)
+ 
