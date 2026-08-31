@@ -129,7 +129,9 @@ def generate_resume(user_id: str, db: Session = Depends(get_db)):
                 "bullets": result["bullets"], "flagged_numbers": result["flagged_numbers"],
             })
             entries_snapshot.append({"entry_id": e["id"], "raw_description": e["raw_description"]})
-        summary_line = generate_resume_summary(client, profile_dict, entry_dicts)
+        summary_result = generate_resume_summary(client, profile_dict, entry_dicts)
+        summary_line = summary_result["summary"]
+        summary_flagged_numbers = summary_result["flagged_numbers"]
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate the resume just now: {e}")
  
@@ -147,11 +149,24 @@ def generate_resume(user_id: str, db: Session = Depends(get_db)):
         db.add(doc)
     db.commit()
  
-    any_flags = any(pe["flagged_numbers"] for pe in polished_entries)
+    # any_flags now also covers the summary line, not just bullets -
+    # a fabricated "5+ years of experience" in the summary is exactly
+    # as real a problem as a fabricated number in a bullet, and was
+    # previously invisible to this check entirely.
+    any_bullet_flags = any(pe["flagged_numbers"] for pe in polished_entries)
+    any_flags = any_bullet_flags or bool(summary_flagged_numbers)
+    if any_bullet_flags and summary_flagged_numbers:
+        review_note = "One or more bullets AND the summary line include a number that wasn't in what you originally wrote - double check those before using this."
+    elif summary_flagged_numbers:
+        review_note = "The summary line includes a number that wasn't in what you originally wrote - double check it before using this."
+    elif any_bullet_flags:
+        review_note = "One or more bullets include a number that wasn't in what you originally wrote - double check those before using this."
+    else:
+        review_note = None
     return {
         "summary_line": summary_line,
         "entries": polished_entries,
-        "review_note": "One or more bullets include a number that wasn't in what you originally wrote - double check those before using this." if any_flags else None,
+        "review_note": review_note,
     }
  
  
