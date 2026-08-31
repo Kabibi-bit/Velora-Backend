@@ -84,6 +84,42 @@ def _embed_listing(title: str, description: str, tags: list[str]) -> list[float]
     return generate_embedding(text, input_type="document")
  
  
+def backfill_missing_embeddings(db: Session, batch_size: int = 100) -> dict:
+    """Any listing ingested before VOYAGE_API_KEY was configured has
+    embedding=None permanently - the ingestion upsert above (`if
+    exists: continue`) skips any listing already in the database by
+    source+external_id, so those specific rows are never revisited by
+    a normal scan, no matter how many days pass or how many times the
+    key gets fixed afterward. Setting up the key correctly today does
+    nothing for listings that predate it; this is the only path back
+    to a real embedding for them, short of waiting for every one of
+    them to naturally expire and get replaced by a fresh listing.
+ 
+    Capped at batch_size per call rather than processing everything
+    at once - safe to call repeatedly (each call picks up the next
+    batch of still-null rows) rather than risking one very large,
+    slow request against a real rate-limited API.
+ 
+    Returns a real count of what happened, not just "done" - honest
+    about a real, if unlikely, partial-failure case: a specific
+    listing's text triggering an API error while others succeed.
+    """
+    from app.services.embeddings import is_configured
+ 
+    if not is_configured():
+        return {"attempted": 0, "succeeded": 0, "detail": "VOYAGE_API_KEY is not set - nothing to backfill until it's configured."}
+ 
+    candidates = db.query(Listing).filter(Listing.embedding.is_(None)).limit(batch_size).all()
+    succeeded = 0
+    for listing in candidates:
+        embedding = _embed_listing(listing.title, listing.description, listing.tags)
+        if embedding is not None:
+            listing.embedding = embedding
+            succeeded += 1
+    db.commit()
+    return {"attempted": len(candidates), "succeeded": succeeded, "detail": f"Processed {len(candidates)} listings with no embedding yet; {succeeded} succeeded. Call again to process the next batch if more remain."}
+ 
+ 
 async def _pull_and_store_new_listings(db: Session):
     """Fetches real listings from two sources - Adzuna for jobs (tagged
     via Claude) and SimplifyJobs for internships (tagged via free
@@ -352,3 +388,4 @@ def start_scheduler():
     scheduler.add_job(run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES)
     scheduler.start()
     return scheduler
+ 
