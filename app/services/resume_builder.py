@@ -152,7 +152,11 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
         f"Here is something a real person wrote, in their own words, about something they actually did:\n\n"
         f'Role/title: "{entry["title"]}"' + (f' at {entry["org"]}' if entry.get("org") else "") + "\n"
         f'What they said they did, in their own words: "{entry["raw_description"]}"\n\n'
-        "Turn this into 2-4 strong resume bullet points.\n\n"
+        "Turn this into 2-4 strong resume bullet points - but if what they wrote genuinely only supports "
+        "fewer distinct, honest bullets without repeating yourself or splitting one real responsibility "
+        "into several separate-sounding ones, write fewer. Even a single bullet is fine if that's all the "
+        "material honestly supports; hitting a minimum count is never a reason to invent a second, distinct "
+        "responsibility that wasn't there.\n\n"
         "Critical rule, more important than anything else here: you may only strengthen the PHRASING of "
         "what they actually wrote - stronger action verbs, tighter and more concrete language, standard "
         "resume conventions. You may NEVER add a specific number, percentage, dollar amount, team size, "
@@ -163,7 +167,8 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
         "No cliches like \"results-driven\", \"team player\", \"go-getter\", \"detail-oriented\", or "
         "\"leveraged\" as a verb - write like a specific, real person describing specific, real work, not a "
         "template filled in with generic resume language.\n\n"
-        "Return a JSON array of 2-4 bullet point strings, nothing else, no markdown fences, no commentary."
+        "Return a JSON array of the bullet point strings - 2-4 for most entries, fewer only if the "
+        "material genuinely doesn't support more - nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
         model="claude-sonnet-4-6", max_tokens=500,
@@ -183,14 +188,26 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
     return {"bullets": bullets, "flagged_numbers": sorted(set(flagged))}
  
  
-def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]) -> str:
+def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]) -> dict:
     """A short professional summary line (1-2 sentences), grounded in
     the person's real stated goal and their real entries - framing
-    what's genuinely there, not inventing new facts. Returns an empty
-    string if there isn't enough real material to say anything honest.
+    what's genuinely there, not inventing new facts. Returns
+    {summary: "", flagged_numbers: []} if there isn't enough real
+    material to say anything honest.
+ 
+    Applies the same deterministic fabrication safety net used for
+    bullets (see _find_fabricated_numbers) - this previously relied
+    entirely on the prompt's "do not invent years of experience"
+    instruction, with no testable check behind it, unlike
+    polish_resume_entry right above it. A summary line is exactly the
+    kind of place a fabricated "5+ years of experience" could appear
+    if the model doesn't follow that instruction perfectly every
+    time, and prompt instructions alone were never meant to be a
+    substitute for the second, deterministic layer - that's the whole
+    reason the two-layer pattern exists in the first place.
     """
     if not profile.get("northstar") and not entries:
-        return ""
+        return {"summary": "", "flagged_numbers": []}
  
     entry_lines = [f'- {e["title"]}' + (f' at {e["org"]}' if e.get("org") else "") for e in entries[:5]]
     prompt = (
@@ -206,7 +223,11 @@ def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]
         model="claude-sonnet-4-6", max_tokens=150,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    summary = "".join(b.text for b in resp.content if b.type == "text").strip()
+ 
+    source_text = f'{profile.get("northstar", "")} ' + " ".join(e.get("raw_description", "") for e in entries)
+    flagged = _find_fabricated_numbers(source_text, summary)
+    return {"summary": summary, "flagged_numbers": flagged}
  
  
 def check_ats_alignment(profile: dict, entries: list[dict]) -> dict:
