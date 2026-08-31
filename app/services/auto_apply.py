@@ -324,15 +324,17 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
     }
  
  
-def draft_ceo_grounded_outreach(db, anthropic_client, user_id: str, listing_id: str, ceo_research: dict):
-    """The CEO-speech-grounded counterpart to draft_outreach_for_match
+def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listing_id: str, leadership_research: dict):
+    """The leadership-grounded counterpart to draft_outreach_for_match
     above - same storage, same edit/send flow, but instead of a
-    generic referral email, this genuinely references a real, current
-    thing the company's CEO has actually said (see
-    market_research.research_ceo_statements), never a fabricated or
-    generic one. If ceo_research found nothing real and specific, this
-    is honest about that rather than inventing something that sounds
-    plausible - see the returned "grounded" flag.
+    generic referral email, this genuinely references what the
+    company's real, current senior leadership - not just the CEO -
+    has actually, publicly said and prioritized (see
+    market_research.research_company_leadership), never a fabricated
+    or generic one. If leadership_research found nothing real and
+    specific, this is honest about that rather than inventing
+    something that sounds plausible - see the returned "grounded"
+    flag.
  
     Reuses the exact same OutreachEmail table, contact-guessing, and
     duplicate-check as draft_outreach_for_match, so this shows up in
@@ -366,25 +368,34 @@ def draft_ceo_grounded_outreach(db, anthropic_client, user_id: str, listing_id: 
     if not guess.get("candidates"):
         return {"error": "no_contact_guess"}
  
-    statements = ceo_research.get("statements") or []
-    ceo_name = ceo_research.get("ceo_name")
-    grounded = bool(statements and ceo_name)
+    leaders = leadership_research.get("leaders") or []
+    priorities_summary = leadership_research.get("priorities_summary") or ""
+    grounded = bool(leaders and priorities_summary)
  
     if grounded:
-        statement_lines = "\n".join(f'- {s.get("theme", "")} (from {s.get("source_title", "an unnamed source")})' for s in statements)
+        leader_lines = "\n".join(
+            f'- {l.get("name","")} ({l.get("title","")}): ' +
+            "; ".join(f'{s.get("theme","")} (from {s.get("source_title","an unnamed source")})' for s in (l.get("statements") or []))
+            for l in leaders
+        )
         research_block = (
-            f'The company\'s real, current CEO is {ceo_name}. Real things they have genuinely, publicly '
-            f"said recently:\n{statement_lines}\n\n"
-            "Reference ONE of these specific, real points naturally in the email - genuinely connect it "
-            "to why this candidate's real background makes them worth a conversation, not just name-drop "
-            "it. Do not quote the CEO's exact original words at length - paraphrase the idea, same as it "
-            "was paraphrased above."
+            f"Real, current senior leadership at this company, and things they have genuinely, publicly "
+            f"said:\n{leader_lines}\n\n"
+            f"An honest synthesis of what this leadership team's real statements actually suggest they're "
+            f"prioritizing right now: {priorities_summary}\n\n"
+            "Reference this real, synthesized sense of what the company's leadership is actually focused "
+            "on right now - or one specific leader's real point if it connects especially well to this "
+            "candidate's background - naturally in the email, genuinely connecting it to why this "
+            "candidate's real background makes them worth a conversation, not just name-dropping it. Do "
+            "not quote anyone's exact original words at length - paraphrase the idea, same as it was "
+            "paraphrased above."
         )
     else:
         research_block = (
-            "No specific, current public statement from this company's CEO was found - write a genuine, "
-            "specific referral email grounded in the candidate's real background and the role itself, "
-            "same as normal. Do not invent a CEO quote or make up something they supposedly said."
+            "No specific, current public statements from this company's leadership were found - write a "
+            "genuine, specific referral email grounded in the candidate's real background and the role "
+            "itself, same as normal. Do not invent a leadership quote or a company priority that wasn't "
+            "actually found."
         )
  
     prompt = (
@@ -418,8 +429,8 @@ def draft_ceo_grounded_outreach(db, anthropic_client, user_id: str, listing_id: 
         body=parsed.get("body", ""),
         status="drafted",
         auto_generated=False,
-        ceo_grounded=grounded,
-        ceo_research_sources=ceo_research.get("sources") or [],
+        leadership_grounded=grounded,
+        leadership_research_sources=leadership_research.get("sources") or [],
     )
     db.add(draft)
     db.commit()
@@ -431,7 +442,7 @@ def draft_ceo_grounded_outreach(db, anthropic_client, user_id: str, listing_id: 
         "subject": draft.subject,
         "status": "drafted",
         "already_existed": False,
-        "ceo_grounded": grounded,
-        "ceo_name": ceo_name,
+        "leadership_grounded": grounded,
+        "leaders": [l.get("name") for l in leaders],
     }
  
