@@ -23,7 +23,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = int(os.getenv("AUTO_APPLY_THRESHOLD", "80"))
 UNDO_WINDOW_MINUTES = int(os.getenv("UNDO_WINDOW_MINUTES", "30"))
  
  
-def draft_application(anthropic_client, listing: dict, profile: dict) -> dict:
+def draft_application(anthropic_client, listing: dict, profile: dict, resume_entries: list[dict] | None = None) -> dict:
     """A genuinely tailored cover-letter-style paragraph, not a
     generic template with the company name swapped in. The old
     version only ever knew the job title, org, and a raw skills
@@ -45,14 +45,33 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> dict:
     internship, with no real basis. That's direct, first-hand
     evidence the instruction alone isn't reliably sufficient, the
     same reason a second, deterministic layer already exists for
-    resume bullets and the summary line. Returns {text: str,
-    flagged_terms: list[str]} - flagged_terms combines genuinely
-    novel numbers (reusing resume_builder.py's proven check) with a
-    small, targeted set of season/timing words that showed up
-    fabricated in that firsthand test - each flagged only if it
-    appears in the draft but nowhere in the real source material.
+    resume bullets and the summary line.
+ 
+    resume_entries is a second, genuine gap surfaced the same
+    first-hand way: every real caller only ever passed a bare
+    "skills" string like "SQL, Python" - never the candidate's actual
+    resume entries, even though that real, specific data already
+    exists elsewhere in this app. A draft grounded only in a skills
+    list has no real, specific thing to reference, which is exactly
+    why a careful hand-written draft against the old prompt still
+    came out sounding more abstract than it should have. When
+    provided, this reuses rank_entries_for_listing (same function
+    listing-tailoring already uses) to find the person's most
+    genuinely relevant real experience for THIS listing, and gives
+    the model that real content to draw from - never inventing
+    something adjacent to it, just making the honest, specific
+    material available in the first place. Optional and backward
+    compatible: every existing caller continues to work unchanged if
+    it doesn't pass this.
+ 
+    Returns {text: str, flagged_terms: list[str]} - flagged_terms
+    combines genuinely novel numbers (reusing resume_builder.py's
+    proven check) with a small, targeted set of season/timing words
+    that showed up fabricated in that firsthand test - each flagged
+    only if it appears in the draft but nowhere in the real source
+    material, which now includes resume_entries when provided.
     """
-    from app.services.resume_builder import _find_fabricated_numbers
+    from app.services.resume_builder import _find_fabricated_numbers, rank_entries_for_listing
  
     matched_terms = list(dict.fromkeys((listing.get("goal_match_tags") or []) + (listing.get("skill_match_tags") or [])))
     description = (listing.get("description") or "").strip()
@@ -70,14 +89,26 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> dict:
     if roadmap_alignment:
         context_lines.append(f'This role specifically advances a stage of the candidate\'s own stated plan: "{roadmap_alignment["title"]}".')
  
+    top_entries = []
+    if resume_entries:
+        ranked = rank_entries_for_listing(resume_entries, listing)
+        top_entries = [e for e in ranked if e["relevance_score"] > 0][:2]
+        if top_entries:
+            entry_lines = "\n".join(
+                f'- {e["title"]}' + (f' at {e.get("org")}' if e.get("org") else '') + f': "{e.get("raw_description", "")}"'
+                for e in top_entries
+            )
+            context_lines.append(f"The candidate's own real, specific experience most relevant to this role, in their own words:\n{entry_lines}")
+ 
     prompt = (
         "\n".join(context_lines) + "\n\n"
         "Write a short, genuinely specific cover-letter-style paragraph (120-180 words) for this application.\n\n"
         "What makes this good, not generic:\n"
         "- Open with something concrete tied to what this specific posting actually says it needs - never a "
         'generic opener like "I am writing to express my interest" or "I am excited to apply for".\n'
-        "- Connect the candidate's real stated skills and goal to what THIS role specifically needs - use the "
-        "actual overlap identified above rather than just restating a generic skills list.\n"
+        "- Connect the candidate's real stated skills and goal, and their real experience above if given, to "
+        "what THIS role specifically needs - use the actual overlap identified above and the candidate's own "
+        "real words rather than just restating a generic skills list.\n"
         "- Never invent a specific accomplishment, project, metric, company name, timeframe (e.g. a season "
         "or start date), or experience the candidate didn't actually state here, or that this posting didn't "
         "actually say. This may be submitted to a real employer representing a real person - vague but "
@@ -100,6 +131,7 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> dict:
         listing.get("title", ""), listing.get("org", ""), description,
         profile.get("northstar", ""), profile.get("skills", ""),
         ", ".join(matched_terms), (roadmap_alignment or {}).get("title", ""),
+        " ".join(f'{e.get("title", "")} {e.get("org", "")} {e.get("raw_description", "")}' for e in top_entries),
     ])
     flagged = set(_find_fabricated_numbers(source_text, text))
     _TIMING_TERMS = ("summer", "fall", "autumn", "winter", "spring")
@@ -149,7 +181,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     match in a scan without any manual action. Returns a dict describing
     the result, or a dict with an 'error' key if it couldn't run.
     """
-    from app.models.db_models import Profile, Listing, Application, RoadmapMilestone, Outcome
+    from app.models.db_models import Profile, Listing, Application, RoadmapMilestone, Outcome, ResumeEntry
     from app.services.matching import score_listing, get_personalized_factor_weights
  
     profile = (
@@ -243,7 +275,9 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     composite_confidence = compute_composite_confidence(match["score_pct"])
     counterfactual_confidence = compute_composite_confidence(match_no_personalization["score_pct"])
  
-    draft_result = draft_application(anthropic_client, listing_dict, profile_dict)
+    resume_entry_rows = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    resume_entry_dicts = [{"title": e.title, "org": e.org, "raw_description": e.raw_description} for e in resume_entry_rows]
+    draft_result = draft_application(anthropic_client, listing_dict, profile_dict, resume_entry_dicts)
     draft_text = draft_result["text"]
     user_threshold = profile.auto_apply_threshold if getattr(profile, "auto_apply_threshold", None) else None
     status = decide_auto_send(composite_confidence, threshold=user_threshold)
@@ -482,4 +516,3 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         "leadership_grounded": grounded,
         "leaders": [l.get("name") for l in leaders],
     }
- 
