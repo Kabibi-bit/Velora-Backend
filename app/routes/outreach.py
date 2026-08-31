@@ -35,24 +35,26 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
     return result
  
  
-class DraftCeoGroundedIn(BaseModel):
+class DraftLeadershipGroundedIn(BaseModel):
     user_id: str
     listing_id: str
  
  
-@router.post("/draft-ceo-grounded")
-def draft_ceo_grounded_outreach_endpoint(payload: DraftCeoGroundedIn, db: Session = Depends(get_db)):
-    """Researches the company's real, current CEO and anything they've
-    genuinely, recently said publicly, then drafts an outreach email
-    that references it - instead of a generic referral request every
-    other applicant could send. Two real web-search-backed steps, not
-    one call pretending to be simple: research first, then drafting,
-    so a genuine "nothing specific was found" result from the first
-    step honestly shapes what the second step writes, rather than the
+@router.post("/draft-leadership-grounded")
+def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGroundedIn, db: Session = Depends(get_db)):
+    """Researches the company's real, current senior leadership - not
+    just the CEO, but other genuine current executives too - and what
+    they've actually, recently said and prioritized publicly, then
+    drafts an outreach email grounded in that real, synthesized view
+    - instead of a generic referral request every other applicant
+    could send. Two real web-search-backed steps, not one call
+    pretending to be simple: research first, then drafting, so a
+    genuine "nothing specific was found" result from the first step
+    honestly shapes what the second step writes, rather than the
     draft inventing something that sounds plausible.
     """
-    from app.services.market_research import research_ceo_statements
-    from app.services.auto_apply import draft_ceo_grounded_outreach
+    from app.services.market_research import get_or_research_company_leadership
+    from app.services.auto_apply import draft_leadership_grounded_outreach
     from app.models.db_models import Listing
  
     listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
@@ -60,11 +62,11 @@ def draft_ceo_grounded_outreach_endpoint(payload: DraftCeoGroundedIn, db: Sessio
         raise HTTPException(status_code=404, detail="Listing not found")
  
     try:
-        ceo_research = research_ceo_statements(client, listing.org)
+        leadership_research = get_or_research_company_leadership(db, client, listing.org)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not research the company's CEO just now: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not research the company's leadership just now: {e}")
  
-    result = draft_ceo_grounded_outreach(db, client, payload.user_id, payload.listing_id, ceo_research)
+    result = draft_leadership_grounded_outreach(db, client, payload.user_id, payload.listing_id, leadership_research)
     if result.get("error") == "no_profile":
         raise HTTPException(status_code=404, detail="No current profile for this user")
     if result.get("error") == "listing_not_found":
@@ -73,7 +75,32 @@ def draft_ceo_grounded_outreach_endpoint(payload: DraftCeoGroundedIn, db: Sessio
         raise HTTPException(status_code=400, detail="Could not guess a contact address for this company")
     if result.get("error") == "draft_generation_failed":
         raise HTTPException(status_code=502, detail="Could not generate a draft just now - try again")
-    return {**result, "ceo_research_sources": ceo_research.get("sources") or []}
+    return {
+        **result,
+        "priorities_summary": leadership_research.get("priorities_summary") or "",
+        "leadership_research_sources": leadership_research.get("sources") or [],
+    }
+ 
+ 
+@router.get("/leadership-research/{listing_id}")
+def get_leadership_research(listing_id: str, db: Session = Depends(get_db)):
+    """A standalone view of the company research itself, not tied to
+    drafting an email - so a candidate can genuinely understand what
+    a company's real leadership seems to be prioritizing before
+    deciding whether to reach out at all, not just see it buried
+    inside a drafted message afterward.
+    """
+    from app.services.market_research import get_or_research_company_leadership
+    from app.models.db_models import Listing
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    try:
+        return get_or_research_company_leadership(db, client, listing.org)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not research this company's leadership just now: {e}")
  
  
 @router.get("/{user_id}")
