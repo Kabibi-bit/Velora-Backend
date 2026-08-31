@@ -3,21 +3,21 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
-
+ 
 from app.db import get_db
 from app.models.db_models import OutreachEmail, Listing
 from app.services.auto_apply import draft_outreach_for_match
 from app.services.email_send import send_email
-
+ 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-
+ 
+ 
 class DraftIn(BaseModel):
     user_id: str
     listing_id: str
-
-
+ 
+ 
 @router.post("/draft")
 def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
     """The 'Find a contact' action - drafts a referral email straight
@@ -33,8 +33,49 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
     if result.get("error") == "draft_generation_failed":
         raise HTTPException(status_code=502, detail="Could not generate a draft just now - try again")
     return result
-
-
+ 
+ 
+class DraftCeoGroundedIn(BaseModel):
+    user_id: str
+    listing_id: str
+ 
+ 
+@router.post("/draft-ceo-grounded")
+def draft_ceo_grounded_outreach_endpoint(payload: DraftCeoGroundedIn, db: Session = Depends(get_db)):
+    """Researches the company's real, current CEO and anything they've
+    genuinely, recently said publicly, then drafts an outreach email
+    that references it - instead of a generic referral request every
+    other applicant could send. Two real web-search-backed steps, not
+    one call pretending to be simple: research first, then drafting,
+    so a genuine "nothing specific was found" result from the first
+    step honestly shapes what the second step writes, rather than the
+    draft inventing something that sounds plausible.
+    """
+    from app.services.market_research import research_ceo_statements
+    from app.services.auto_apply import draft_ceo_grounded_outreach
+    from app.models.db_models import Listing
+ 
+    listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    try:
+        ceo_research = research_ceo_statements(client, listing.org)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not research the company's CEO just now: {e}")
+ 
+    result = draft_ceo_grounded_outreach(db, client, payload.user_id, payload.listing_id, ceo_research)
+    if result.get("error") == "no_profile":
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    if result.get("error") == "listing_not_found":
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if result.get("error") == "no_contact_guess":
+        raise HTTPException(status_code=400, detail="Could not guess a contact address for this company")
+    if result.get("error") == "draft_generation_failed":
+        raise HTTPException(status_code=502, detail="Could not generate a draft just now - try again")
+    return {**result, "ceo_research_sources": ceo_research.get("sources") or []}
+ 
+ 
 @router.get("/{user_id}")
 def list_outreach(user_id: str, db: Session = Depends(get_db)):
     """Lists every outreach email (drafted or sent) for Workshop -
@@ -64,14 +105,14 @@ def list_outreach(user_id: str, db: Session = Depends(get_db)):
         }
         for o, l in rows
     ]
-
-
+ 
+ 
 class EditOutreachIn(BaseModel):
     subject: str | None = None
     body: str | None = None
     to_address: str | None = None
-
-
+ 
+ 
 @router.patch("/{outreach_id}")
 def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
     """Lets the user edit a drafted email in Workshop before sending."""
@@ -89,8 +130,8 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
         outreach.address_verified = False  # editing the address resets verification status
     db.commit()
     return {"status": "updated"}
-
-
+ 
+ 
 @router.post("/{outreach_id}/send")
 def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
     """The one real send action - fires only when explicitly called,
@@ -102,7 +143,7 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Outreach draft not found")
     if outreach.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent")
-
+ 
     try:
         send_email(outreach.to_address, outreach.subject, outreach.body)
         outreach.status = "sent"
@@ -112,8 +153,8 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
         outreach.status = "failed"
         db.commit()
         raise HTTPException(status_code=502, detail=f"Send failed: {e}")
-
-
+ 
+ 
 @router.post("/send-all/{user_id}")
 def send_all_pending(user_id: str, db: Session = Depends(get_db)):
     """The 'Send all pending outreach' bulk action for Workshop - still
@@ -132,3 +173,4 @@ def send_all_pending(user_id: str, db: Session = Depends(get_db)):
             results.append({"id": str(outreach.id), "status": "failed", "error": str(e)})
     db.commit()
     return {"results": results, "total": len(results)}
+ 
