@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
  
-from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, tutors, businesses, saved_listings, notifications, career_discovery, outreach, auth, social, athletics, market_research, resume, system
+from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, tutors, businesses, saved_listings, notifications, career_discovery, outreach, auth, social, athletics, market_research, resume
 from app.services.scheduler import start_scheduler
  
 load_dotenv()
@@ -37,7 +37,22 @@ app.include_router(social.router)
 app.include_router(athletics.router)
 app.include_router(market_research.router)
 app.include_router(resume.router)
-app.include_router(system.router)
+ 
+# system.py is a small, purely diagnostic router (the
+# /system/embeddings-status health check) - genuinely optional,
+# unlike every router above. This import is deliberately isolated
+# and guarded: without this try/except, a missing or broken
+# system.py (a new file, easy to miss when applying a batch of
+# changes - exactly what happened once already, taking the entire
+# backend down for a single diagnostic endpoint) would crash this
+# whole shared import statement, since it previously sat in the same
+# line as every essential router. A purely diagnostic endpoint
+# should never be able to take the rest of the app down with it.
+try:
+    from app.routes import system
+    app.include_router(system.router)
+except Exception as e:
+    print(f"system router (embeddings-status diagnostic endpoint) failed to load, continuing without it: {e}")
  
  
 # TEMPORARY DEBUG HANDLER: shows the real error directly in the API
