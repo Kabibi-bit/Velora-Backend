@@ -1,4 +1,3 @@
-
 import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
@@ -60,7 +59,7 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
     the confidence score you pass in (use the score from /listings/matches).
     Kept for manual/testing use - /accept is the real one-click path.
     """
-    from app.models.db_models import Profile, Listing
+    from app.models.db_models import Profile, Listing, ResumeEntry
  
     profile = (
         db.query(Profile)
@@ -75,8 +74,10 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Listing not found")
  
     profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
-    listing_dict = {"title": listing.title, "org": listing.org}
-    draft_result = draft_application(client, listing_dict, profile_dict)
+    listing_dict = {"title": listing.title, "org": listing.org, "tags": listing.tags or []}
+    resume_entry_rows = db.query(ResumeEntry).filter(ResumeEntry.user_id == payload.user_id).all()
+    resume_entry_dicts = [{"title": e.title, "org": e.org, "raw_description": e.raw_description} for e in resume_entry_rows]
+    draft_result = draft_application(client, listing_dict, profile_dict, resume_entry_dicts)
     draft_text = draft_result["text"]
     status = decide_auto_send(payload.confidence_pct)
  
@@ -230,3 +231,4 @@ def explain_outcome(application_id: str, db: Session = Depends(get_db)):
         float(app_record.confidence_pct or 0), outcome.status, profile_dict,
     )
     return {"application_id": application_id, "outcome_status": outcome.status, "explanation": explanation}
+ 
