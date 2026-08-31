@@ -83,49 +83,71 @@ def generate_interview_prep(anthropic_client, company_name: str, role_title: str
     return json.loads(text)
  
  
-def research_ceo_statements(anthropic_client, company_name: str) -> dict:
-    """Searches for a company's real CEO and what they've actually,
-    recently said publicly - speeches, interviews, conference talks,
-    company blog posts under their name - so an outreach message can
-    reference something genuinely real about them, not a generic
-    "I'm passionate about your mission" line every other applicant
-    could send. Never invents a statement; if nothing real and
-    current turns up, says so plainly rather than filling the gap
-    with a plausible-sounding guess.
+def research_company_leadership(anthropic_client, company_name: str) -> dict:
+    """Searches for a company's real senior leadership - not just the
+    CEO, but the CTO, COO, CPO, and other C-suite or VP-level
+    executives - and what they've actually, recently said publicly:
+    speeches, interviews, conference talks, posts under their own
+    name. Then synthesizes a real, honest sense of what this
+    company's leadership actually seems to be prioritizing right now,
+    grounded in what multiple real people have actually said, not
+    just one CEO's framing (which is often more polished, generic
+    company messaging than what other leaders reveal in less
+    rehearsed settings).
+ 
+    Never invents a leader, a statement, or a priority; if nothing
+    real and current turns up for a given person, or for the company
+    at all, this says so plainly rather than filling the gap with a
+    plausible-sounding guess. priorities_summary is built ONLY from
+    what was actually found - if nothing real turned up, it's empty,
+    not a generic assumption about companies like this one.
  
     Paraphrases what's found rather than quoting speeches at length -
-    both because that's a copyright concern with someone else's
-    original words, and because a paraphrased idea reads more
-    naturally in an outreach message than a lifted quote would
-    anyway. Mirrors research_company's real-search pattern above,
-    including real source-URL extraction so a candidate can verify
-    this themselves before sending anything grounded in it.
+    both a copyright concern with someone else's original words, and
+    a paraphrased idea reads more naturally in an outreach message
+    than a lifted quote would anyway. Mirrors research_company's
+    real-search pattern above, including real source-URL extraction
+    so a candidate can verify this themselves before sending anything
+    grounded in it.
  
-    Returns {ceo_name, statements: [{theme, source_title}], sources:
-    [{url, title}]} - statements is empty (not fabricated) if nothing
-    real was found.
+    Returns {leaders: [{name, title, statements: [{theme,
+    source_title}]}], priorities_summary: str, sources: [{url,
+    title}]} - leaders and priorities_summary are empty (never
+    fabricated) if nothing real was found.
     """
     prompt = (
-        f'Search for the real, current CEO of "{company_name}", and anything they have genuinely, '
-        "publicly said recently - a speech, conference talk, interview, podcast appearance, or a post "
-        "under their own name on the company's blog or elsewhere. Look for real statements about their "
-        "vision, values, what they care about, or a specific point they've made - not generic corporate "
-        "mission-statement language.\n\n"
-        "Only report what you actually find through search. If you can't find the current CEO, or can't "
-        "find anything genuinely specific and recent they've said, say that plainly rather than guessing "
-        "or filling in something generic that sounds plausible.\n\n"
+        f'Search for real, current senior leadership at "{company_name}" - the CEO, and other genuine '
+        "C-suite or VP-level executives (CTO, COO, CPO, Head of Engineering, etc., whoever is real and "
+        "current for this specific company) - and anything they've genuinely, publicly said recently: a "
+        "speech, conference talk, interview, podcast appearance, or a post under their own name on the "
+        "company's blog or elsewhere. Look for real statements about what they're building toward, what "
+        "they care about, or specific priorities they've mentioned - not generic corporate mission-"
+        "statement language.\n\n"
+        "Only report real people and real statements you actually find through search. If you can only "
+        "confirm the CEO and no other leaders, that's fine - report just the CEO. If you can't find "
+        "anything genuinely specific and recent from anyone, say that plainly rather than guessing or "
+        "filling in something generic that sounds plausible.\n\n"
         "For anything you do find, paraphrase the real idea in your own words rather than quoting it at "
         "length - describe the theme or point they made, not their exact original wording.\n\n"
+        "After gathering what real leaders have actually said, write a short, honest summary of what this "
+        "company's leadership actually seems to be prioritizing right now - genuinely synthesized from "
+        "multiple real people's real statements if more than one was found, not just the most polished "
+        "one. If you found real statements from only one person, or nothing specific at all, be honest "
+        "about that limitation in the summary rather than presenting a single view as the whole company's "
+        "position, or inventing a summary from nothing.\n\n"
         "Return a JSON object with exactly these keys:\n"
-        '- ceo_name: the real, current CEO\'s name, or null if you could not confirm one\n'
-        "- statements: an array of up to 3 objects, each with 'theme' (1-2 sentences paraphrasing a real "
-        "point they made, in your own words) and 'source_title' (what the source actually was - e.g. "
-        '"a 2025 conference keynote" or "an interview with [real publication]") - empty array if nothing '
-        "real and specific was found\n\n"
+        "- leaders: an array of objects, each with 'name' (real, confirmed), 'title' (their real, current "
+        "title), and 'statements' (an array of up to 2 objects, each with 'theme' - 1-2 sentences "
+        "paraphrasing a real point they made, in your own words - and 'source_title' - what the source "
+        "actually was, e.g. \"a 2025 conference keynote\" or \"an interview with [real publication]\") - "
+        "empty array if no real leaders with real statements were found\n"
+        "- priorities_summary: 2-3 honest sentences on what this leadership team's real, recent public "
+        "statements actually suggest they're prioritizing - empty string if nothing real enough to "
+        "synthesize was found\n\n"
         "Return ONLY the JSON object, nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=1000,
+        model="claude-sonnet-4-6", max_tokens=1500,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
@@ -145,11 +167,55 @@ def research_ceo_statements(anthropic_client, company_name: str) -> dict:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        return {"ceo_name": None, "statements": [], "sources": sources}
+        return {"leaders": [], "priorities_summary": "", "sources": sources}
  
     return {
-        "ceo_name": parsed.get("ceo_name"),
-        "statements": parsed.get("statements") or [],
+        "leaders": parsed.get("leaders") or [],
+        "priorities_summary": parsed.get("priorities_summary") or "",
         "sources": sources,
     }
+ 
+ 
+def get_or_research_company_leadership(db, anthropic_client, company_name: str, max_age_days: int = 30) -> dict:
+    """Checks the real cache (CompanyLeadershipResearch) before ever
+    making a real, billed web-search call - without this, viewing a
+    company's leadership research and then drafting an outreach email
+    for it would trigger the same expensive search twice, and every
+    other candidate applying to the same company would each trigger
+    their own redundant search too.
+ 
+    A cached result older than max_age_days is treated as stale and
+    re-researched - a CEO's public priorities from 8 months ago may
+    no longer reflect what leadership is actually focused on now.
+    """
+    from app.models.db_models import CompanyLeadershipResearch
+    from datetime import datetime, timedelta
+ 
+    normalized = company_name.strip().lower()
+    cached = (
+        db.query(CompanyLeadershipResearch)
+        .filter(CompanyLeadershipResearch.company_name_normalized == normalized)
+        .first()
+    )
+    if cached and cached.researched_at and (datetime.utcnow() - cached.researched_at) < timedelta(days=max_age_days):
+        return {
+            "leaders": cached.leaders, "priorities_summary": cached.priorities_summary,
+            "sources": cached.sources, "cached": True,
+        }
+ 
+    fresh = research_company_leadership(anthropic_client, company_name)
+ 
+    if cached:
+        cached.leaders = fresh["leaders"]
+        cached.priorities_summary = fresh["priorities_summary"]
+        cached.sources = fresh["sources"]
+        cached.researched_at = datetime.utcnow()
+    else:
+        db.add(CompanyLeadershipResearch(
+            company_name_normalized=normalized, company_name_display=company_name,
+            leaders=fresh["leaders"], priorities_summary=fresh["priorities_summary"], sources=fresh["sources"],
+        ))
+    db.commit()
+ 
+    return {**fresh, "cached": False}
  
