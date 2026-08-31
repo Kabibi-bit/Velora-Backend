@@ -229,8 +229,8 @@ class OutreachEmail(Base):
     body = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     auto_generated = Column(Boolean, nullable=False, default=False)
-    ceo_grounded = Column(Boolean, nullable=False, default=False)  # True only if a real, current CEO statement was found and referenced
-    ceo_research_sources = Column(JSONB, nullable=True)  # [{url, title}] - the real sources behind a ceo_grounded draft, for the recipient's own verification
+    leadership_grounded = Column(Boolean, nullable=False, default=False)  # True only if real, current leadership statements were found and referenced
+    leadership_research_sources = Column(JSONB, nullable=True)  # [{url, title}] - the real sources behind a leadership_grounded draft, for the recipient's own verification
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
@@ -383,3 +383,23 @@ class ApiQuotaTracker(Base):
     date = Column(String, primary_key=True)  # YYYY-MM-DD, not a DateTime - this is a daily bucket key, not a timestamp
     call_count = Column(Integer, default=0)
  
+ 
+class CompanyLeadershipResearch(Base):
+    """A real cache, not just a nice-to-have: without this, a
+    candidate viewing a company's leadership research and then
+    deciding to draft an outreach email would trigger the same real,
+    billed web-search call twice for the same company - and every
+    other candidate applying to the same company would each trigger
+    their own redundant search too. Keyed by a normalized company
+    name (lowercased, stripped) so "Acme Inc" and "acme inc " hit the
+    same cached row. See app/services/market_research.py's
+    get_or_research_company_leadership for how this gets checked
+    before ever making a real search call.
+    """
+    __tablename__ = "company_leadership_research"
+    company_name_normalized = Column(String, primary_key=True)
+    company_name_display = Column(String, nullable=False)  # the real, as-typed name, for display
+    leaders = Column(JSONB, nullable=False)
+    priorities_summary = Column(Text, nullable=False)
+    sources = Column(JSONB, nullable=False)
+    researched_at = Column(DateTime, default=datetime.utcnow)
