@@ -202,8 +202,21 @@ def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depen
     how they're ordered - the honest content is identical regardless
     of which job this is for.
     """
+    import uuid as uuid_module
     from app.services.resume_builder import rank_entries_for_listing
     from app.models.db_models import Listing
+ 
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        # A malformed listing_id (not just a valid-but-nonexistent
+        # one) would otherwise reach the DB query below and raise a
+        # raw, unhandled database exception - verified directly
+        # against real SQLAlchemy/psycopg2 behavior before adding
+        # this check, since listing_id is a user-controllable URL
+        # path parameter, not something this endpoint can trust is
+        # always well-formed.
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     entries = (
         db.query(ResumeEntry)
@@ -293,4 +306,3 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
     entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
     entry_dicts = [{"raw_description": e.raw_description} for e in entries]
     return build_skills_section({"skills": profile.skills}, entry_dicts)
- 
