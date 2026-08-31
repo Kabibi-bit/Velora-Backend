@@ -82,3 +82,74 @@ def generate_interview_prep(anthropic_client, company_name: str, role_title: str
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(text)
  
+ 
+def research_ceo_statements(anthropic_client, company_name: str) -> dict:
+    """Searches for a company's real CEO and what they've actually,
+    recently said publicly - speeches, interviews, conference talks,
+    company blog posts under their name - so an outreach message can
+    reference something genuinely real about them, not a generic
+    "I'm passionate about your mission" line every other applicant
+    could send. Never invents a statement; if nothing real and
+    current turns up, says so plainly rather than filling the gap
+    with a plausible-sounding guess.
+ 
+    Paraphrases what's found rather than quoting speeches at length -
+    both because that's a copyright concern with someone else's
+    original words, and because a paraphrased idea reads more
+    naturally in an outreach message than a lifted quote would
+    anyway. Mirrors research_company's real-search pattern above,
+    including real source-URL extraction so a candidate can verify
+    this themselves before sending anything grounded in it.
+ 
+    Returns {ceo_name, statements: [{theme, source_title}], sources:
+    [{url, title}]} - statements is empty (not fabricated) if nothing
+    real was found.
+    """
+    prompt = (
+        f'Search for the real, current CEO of "{company_name}", and anything they have genuinely, '
+        "publicly said recently - a speech, conference talk, interview, podcast appearance, or a post "
+        "under their own name on the company's blog or elsewhere. Look for real statements about their "
+        "vision, values, what they care about, or a specific point they've made - not generic corporate "
+        "mission-statement language.\n\n"
+        "Only report what you actually find through search. If you can't find the current CEO, or can't "
+        "find anything genuinely specific and recent they've said, say that plainly rather than guessing "
+        "or filling in something generic that sounds plausible.\n\n"
+        "For anything you do find, paraphrase the real idea in your own words rather than quoting it at "
+        "length - describe the theme or point they made, not their exact original wording.\n\n"
+        "Return a JSON object with exactly these keys:\n"
+        '- ceo_name: the real, current CEO\'s name, or null if you could not confirm one\n'
+        "- statements: an array of up to 3 objects, each with 'theme' (1-2 sentences paraphrasing a real "
+        "point they made, in your own words) and 'source_title' (what the source actually was - e.g. "
+        '"a 2025 conference keynote" or "an interview with [real publication]") - empty array if nothing '
+        "real and specific was found\n\n"
+        "Return ONLY the JSON object, nothing else, no markdown fences, no commentary."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=1000,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+ 
+    sources = []
+    for block in resp.content:
+        if getattr(block, "type", None) == "web_search_tool_result":
+            for item in getattr(block, "content", []) or []:
+                url = getattr(item, "url", None)
+                title = getattr(item, "title", None)
+                if url:
+                    sources.append({"url": url, "title": title or url})
+ 
+    import json
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"ceo_name": None, "statements": [], "sources": sources}
+ 
+    return {
+        "ceo_name": parsed.get("ceo_name"),
+        "statements": parsed.get("statements") or [],
+        "sources": sources,
+    }
+ 
