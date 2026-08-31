@@ -323,3 +323,115 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
         "auto_generated": auto_generated,
     }
  
+ 
+def draft_ceo_grounded_outreach(db, anthropic_client, user_id: str, listing_id: str, ceo_research: dict):
+    """The CEO-speech-grounded counterpart to draft_outreach_for_match
+    above - same storage, same edit/send flow, but instead of a
+    generic referral email, this genuinely references a real, current
+    thing the company's CEO has actually said (see
+    market_research.research_ceo_statements), never a fabricated or
+    generic one. If ceo_research found nothing real and specific, this
+    is honest about that rather than inventing something that sounds
+    plausible - see the returned "grounded" flag.
+ 
+    Reuses the exact same OutreachEmail table, contact-guessing, and
+    duplicate-check as draft_outreach_for_match, so this shows up in
+    the same Workshop list, same edit/send actions - a different way
+    of writing the draft, not a parallel system.
+    """
+    from app.models.db_models import Profile, Listing, OutreachEmail
+    from app.services.email_send import guess_contact_emails
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        return {"error": "no_profile"}
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        return {"error": "listing_not_found"}
+ 
+    existing = (
+        db.query(OutreachEmail)
+        .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+        .first()
+    )
+    if existing:
+        return {"outreach_id": str(existing.id), "status": existing.status, "already_existed": True}
+ 
+    guess = guess_contact_emails(listing.org)
+    if not guess.get("candidates"):
+        return {"error": "no_contact_guess"}
+ 
+    statements = ceo_research.get("statements") or []
+    ceo_name = ceo_research.get("ceo_name")
+    grounded = bool(statements and ceo_name)
+ 
+    if grounded:
+        statement_lines = "\n".join(f'- {s.get("theme", "")} (from {s.get("source_title", "an unnamed source")})' for s in statements)
+        research_block = (
+            f'The company\'s real, current CEO is {ceo_name}. Real things they have genuinely, publicly '
+            f"said recently:\n{statement_lines}\n\n"
+            "Reference ONE of these specific, real points naturally in the email - genuinely connect it "
+            "to why this candidate's real background makes them worth a conversation, not just name-drop "
+            "it. Do not quote the CEO's exact original words at length - paraphrase the idea, same as it "
+            "was paraphrased above."
+        )
+    else:
+        research_block = (
+            "No specific, current public statement from this company's CEO was found - write a genuine, "
+            "specific referral email grounded in the candidate's real background and the role itself, "
+            "same as normal. Do not invent a CEO quote or make up something they supposedly said."
+        )
+ 
+    prompt = (
+        f"A candidate is applying to \"{listing.title}\" at {listing.org} ({listing.type}), "
+        f"tags: {', '.join(listing.tags or [])}. Their background: skills \"{profile.skills or ''}\", "
+        f"goal \"{profile.northstar}\".\n\n"
+        f"{research_block}\n\n"
+        "Write a genuine, specific 80-120 word referral outreach email body, plus a short subject line. "
+        "Reference the candidate's real skills/goal and the specific role, ask for a short conversation "
+        "or referral, no generic flattery. Return ONLY valid JSON with exactly two keys: 'subject' and "
+        "'body'. No markdown fences."
+    )
+    resp = anthropic_client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    import json
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"error": "draft_generation_failed"}
+ 
+    draft = OutreachEmail(
+        user_id=user_id,
+        listing_id=listing_id,
+        to_address=guess["candidates"][0],
+        address_verified=False,
+        subject=parsed.get("subject", f"Regarding {listing.title}"),
+        body=parsed.get("body", ""),
+        status="drafted",
+        auto_generated=False,
+        ceo_grounded=grounded,
+        ceo_research_sources=ceo_research.get("sources") or [],
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+ 
+    return {
+        "outreach_id": str(draft.id),
+        "to_address": draft.to_address,
+        "subject": draft.subject,
+        "status": "drafted",
+        "already_existed": False,
+        "ceo_grounded": grounded,
+        "ceo_name": ceo_name,
+    }
+ 
