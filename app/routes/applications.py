@@ -1,287 +1,232 @@
+
 import os
-from datetime import date
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import AthleteEvent, AthleteOutreach
-from app.services.athletics import generate_recruiting_content_plan, research_target_program, draft_coach_outreach, generate_clip_edit_plan
-from app.services.email_send import guess_contact_emails, send_email
+from app.models.db_models import Application
+from app.services.auto_apply import (
+    draft_application,
+    decide_auto_send,
+    compute_sendable_at,
+    create_application_for_match,
+)
  
-router = APIRouter(prefix="/athletics", tags=["athletics"])
+router = APIRouter(prefix="/applications", tags=["applications"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
-VALID_DIRECTIONS = {"play-college", "go-pro", "coach", "sports-management"}
+ 
+class AcceptIn(BaseModel):
+    user_id: str
+    listing_id: str
  
  
-class ContentPlanIn(BaseModel):
-    sport: str
-    level: str
-    career_direction: str
-    achievements: str = ""
- 
- 
-@router.post("/content-coach")
-def content_coach(payload: ContentPlanIn):
-    """Generates real, grounded recruiting content guidance - a
-    highlight reel structure, commonly-evaluated skills/metrics for
-    this sport and level, specific drills to practice, and a filming
-    checklist. Takes the athlete's profile fields directly in the
-    request rather than looking one up, since there's no stored
-    athlete-profile table on the backend yet - the athlete survey
-    data has stayed frontend-only so far, an honest gap rather than
-    something silently assumed to exist.
+@router.post("/accept")
+def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
+    """The one-click 'I accept this match' action - this is also what
+    fires automatically when a user stars a listing (see /saved in
+    saved_listings.py). Computes the real match score, drafts a
+    tailored application via Claude, and decides whether it's
+    confident enough to queue for auto-send or needs human review.
     """
-    if payload.career_direction not in VALID_DIRECTIONS:
-        raise HTTPException(status_code=400, detail=f"career_direction must be one of {VALID_DIRECTIONS}")
-    try:
-        plan = generate_recruiting_content_plan(
-            client, payload.sport, payload.level, payload.career_direction, payload.achievements
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a content plan just now: {e}")
-    return plan
+    result = create_application_for_match(db, client, payload.user_id, payload.listing_id)
  
+    if result.get("error") == "no_profile":
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    if result.get("error") == "listing_not_found":
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if result.get("error") == "dealbreaker_conflict":
+        raise HTTPException(status_code=400, detail="This listing conflicts with one of your stated deal-breakers - not drafting an application for it.")
  
-class ProgramResearchIn(BaseModel):
-    sport: str
-    level: str
-    program_name: str
- 
- 
-@router.post("/research-program")
-def research_program(payload: ProgramResearchIn):
-    """The real-search upgrade: gives Claude the actual Anthropic web
-    search tool to find and cite genuine, current public information
-    about a specific named program, rather than general knowledge.
-    Reports plainly when search doesn't turn up anything specific.
-    """
-    if not payload.program_name.strip():
-        raise HTTPException(status_code=400, detail="program_name is required")
-    try:
-        result = research_target_program(client, payload.sport, payload.level, payload.program_name)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not research this program just now: {e}")
+    if result.get("already_existed"):
+        result["note"] = "An application for this match already exists - returning it instead of drafting a duplicate."
+    else:
+        result["note"] = "approved = eligible to auto-send after the undo window; pending_review = needs your explicit approval first"
     return result
  
  
-VALID_EVENT_TYPES = {"tryout", "camp", "combine", "application_deadline", "other"}
-VALID_EVENT_STATUSES = {"upcoming", "attended", "passed", "missed"}
- 
- 
-class EventIn(BaseModel):
+class DraftIn(BaseModel):
     user_id: str
-    title: str
-    org: str | None = None
-    event_type: str
-    event_date: date | None = None
-    roadmap_stage: int | None = None
-    roadmap_stage_title: str | None = None
-    notes: str | None = None
+    listing_id: str
+    confidence_pct: float
  
  
-@router.post("/events")
-def create_event(payload: EventIn, db: Session = Depends(get_db)):
-    """Tracks a deadline or trial opportunity - a tryout, camp,
-    combine, or application deadline - optionally tied to a specific
-    roadmap stage.
+@router.post("/draft")
+def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
+    """Drafts an application and decides auto-send vs review, based on
+    the confidence score you pass in (use the score from /listings/matches).
+    Kept for manual/testing use - /accept is the real one-click path.
     """
-    if payload.event_type not in VALID_EVENT_TYPES:
-        raise HTTPException(status_code=400, detail=f"event_type must be one of {VALID_EVENT_TYPES}")
-    event = AthleteEvent(
-        user_id=payload.user_id, title=payload.title, org=payload.org,
-        event_type=payload.event_type, event_date=payload.event_date,
-        roadmap_stage=payload.roadmap_stage, roadmap_stage_title=payload.roadmap_stage_title,
-        notes=payload.notes,
+    from app.models.db_models import Profile, Listing
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
     )
-    db.add(event)
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
+    listing_dict = {"title": listing.title, "org": listing.org}
+    draft_result = draft_application(client, listing_dict, profile_dict)
+    draft_text = draft_result["text"]
+    status = decide_auto_send(payload.confidence_pct)
+ 
+    app_record = Application(
+        user_id=payload.user_id,
+        listing_id=payload.listing_id,
+        draft_content=draft_text,
+        confidence_pct=payload.confidence_pct,
+        status=status,
+        sendable_at=compute_sendable_at() if status == "approved" else None,
+        draft_flagged_terms=draft_result["flagged_terms"],
+        # factors_snapshot intentionally left None here - this fallback
+        # endpoint takes confidence_pct directly from the caller rather
+        # than computing it via score_listing(), so there's no real
+        # factor breakdown to capture. The primary path (/accept, via
+        # create_application_for_match) does capture it.
+    )
+    db.add(app_record)
     db.commit()
-    db.refresh(event)
-    return {"event_id": str(event.id), "status": "created"}
+    db.refresh(app_record)
+ 
+    return {
+        "application_id": str(app_record.id),
+        "status": status,
+        "draft": draft_text,
+        "review_note": "This draft includes a number or timing claim that wasn't in the job posting or your profile - double check it before sending." if draft_result["flagged_terms"] else None,
+        "note": "approved = eligible to auto-send after the undo window; pending_review = needs your explicit approval first",
+    }
  
  
-@router.get("/events/{user_id}")
-def list_events(user_id: str, db: Session = Depends(get_db)):
+@router.get("/{user_id}")
+def list_applications(user_id: str, db: Session = Depends(get_db)):
+    """Lists all drafted applications for a user - this is what backs
+    the frontend's Workshop page.
+    """
+    from app.models.db_models import Listing
+ 
     rows = (
-        db.query(AthleteEvent)
-        .filter(AthleteEvent.user_id == user_id)
-        .order_by(AthleteEvent.event_date.asc().nullslast())
+        db.query(Application, Listing)
+        .join(Listing, Application.listing_id == Listing.id)
+        .filter(Application.user_id == user_id)
+        .order_by(Application.created_at.desc())
         .all()
     )
     return [
         {
-            "id": str(e.id), "title": e.title, "org": e.org, "event_type": e.event_type,
-            "event_date": e.event_date.isoformat() if e.event_date else None,
-            "roadmap_stage": e.roadmap_stage, "roadmap_stage_title": e.roadmap_stage_title,
-            "status": e.status, "notes": e.notes, "created_at": e.created_at.isoformat(),
+            "id": str(a.id),
+            "listing_id": str(a.listing_id),
+            "listing_title": l.title,
+            "listing_org": l.org,
+            "status": a.status,
+            "confidence_pct": float(a.confidence_pct) if a.confidence_pct else None,
+            "draft": a.draft_content,
+            "sendable_at": a.sendable_at.isoformat() if a.sendable_at else None,
+            "sent_at": a.sent_at.isoformat() if a.sent_at else None,
+            "auto_generated": a.auto_generated,
+            "created_at": a.created_at.isoformat(),
         }
-        for e in rows
+        for a, l in rows
     ]
  
  
-class EventStatusIn(BaseModel):
-    status: str
- 
- 
-@router.post("/events/{event_id}/status")
-def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Depends(get_db)):
-    if payload.status not in VALID_EVENT_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status must be one of {VALID_EVENT_STATUSES}")
-    event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    event.status = payload.status
+@router.post("/{application_id}/approve")
+def approve_application(application_id: str, db: Session = Depends(get_db)):
+    """For applications sitting in pending_review - the human approval step."""
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app_record.status = "approved"
+    app_record.sendable_at = compute_sendable_at()
     db.commit()
-    return {"status": "updated", "event_status": event.status}
+    return {"status": "approved", "sendable_at": app_record.sendable_at.isoformat()}
  
  
-@router.delete("/events/{event_id}")
-def delete_event(event_id: str, db: Session = Depends(get_db)):
-    event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    db.delete(event)
-    db.commit()
-    return {"status": "deleted"}
- 
- 
-class CoachOutreachIn(BaseModel):
-    user_id: str
-    sport: str
-    level: str
-    career_direction: str
-    achievements: str = ""
-    target_description: str
-    org_name: str
-    roadmap_stage: int | None = None
-    roadmap_stage_title: str | None = None
- 
- 
-@router.post("/outreach")
-def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
-    """Drafts a real email and cold-call script for reaching a coach or
-    staff member, and stores it as a real draft - review/edit/send
-    from here, same lifecycle as every other outreach draft in the
-    app. Never invents a specific named person - only describes the
-    TYPE of contact and gives a real, usable script.
+@router.post("/{application_id}/send")
+def send_application(application_id: str, db: Session = Depends(get_db)):
+    """Marks an application as sent, only if approved and the undo
+    window has passed. NOTE: this does not submit anything to a real
+    job site -- see the honest limitation noted in auto_apply.py.
     """
-    try:
-        drafted = draft_coach_outreach(
-            client, payload.sport, payload.level, payload.career_direction,
-            payload.achievements, payload.target_description,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate outreach just now: {e}")
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app_record.status != "approved":
+        raise HTTPException(status_code=400, detail="Application is not approved yet")
+    if app_record.sendable_at and datetime.utcnow() < app_record.sendable_at:
+        remaining = (app_record.sendable_at - datetime.utcnow()).seconds // 60
+        raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
  
-    guess = guess_contact_emails(payload.org_name)
-    if not guess.get("candidates"):
-        raise HTTPException(status_code=400, detail="Could not guess a contact address for this program")
+    app_record.status = "sent"
+    app_record.sent_at = datetime.utcnow()
+    db.commit()
+    return {"status": "sent", "sent_at": app_record.sent_at.isoformat()}
  
-    outreach = AthleteOutreach(
-        user_id=payload.user_id,
-        target_description=payload.target_description,
-        to_address=guess["candidates"][0],
-        address_verified=False,
-        subject=drafted["email_subject"],
-        body=drafted["email_body"],
-        cold_call_script=drafted["cold_call_script"],
-        roadmap_stage=payload.roadmap_stage,
-        roadmap_stage_title=payload.roadmap_stage_title,
+ 
+@router.post("/{application_id}/undo")
+def undo_application(application_id: str, db: Session = Depends(get_db)):
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app_record.status == "sent":
+        raise HTTPException(status_code=400, detail="Already sent, cannot undo")
+    app_record.status = "undone"
+    db.commit()
+    return {"status": "undone"}
+ 
+ 
+@router.get("/{application_id}/explain-outcome")
+def explain_outcome(application_id: str, db: Session = Depends(get_db)):
+    """The rejection/ghost autopsy - a real, specific comparison of what
+    was actually sent against the actual listing, grounded in the real
+    outcome logged for it. Requires an outcome to already be logged via
+    POST /outcomes for this listing, since there's nothing to analyze
+    against otherwise.
+    """
+    import os
+    import anthropic
+    from app.models.db_models import Listing, Profile, Outcome
+    from app.services.calibration import explain_outcome_deep
+ 
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+ 
+    outcome = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == app_record.user_id, Outcome.listing_id == app_record.listing_id)
+        .order_by(Outcome.updated_at.desc())
+        .first()
     )
-    db.add(outreach)
-    db.commit()
-    db.refresh(outreach)
-    return {
-        "outreach_id": str(outreach.id),
-        "who_to_contact": drafted["who_to_contact"],
-        "how_to_find": drafted["how_to_find"],
-        "to_address": outreach.to_address,
-        "subject": outreach.subject,
-        "body": outreach.body,
-        "cold_call_script": outreach.cold_call_script,
-        "status": "drafted",
-    }
+    if not outcome:
+        raise HTTPException(status_code=400, detail="No outcome logged for this application yet - log one via POST /outcomes first")
+    if outcome.status not in {"rejected", "ghosted"}:
+        raise HTTPException(status_code=400, detail="Autopsy is only meaningful for a rejected or ghosted outcome")
  
+    listing = db.query(Listing).filter(Listing.id == app_record.listing_id).first()
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == app_record.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not listing or not profile:
+        raise HTTPException(status_code=404, detail="Listing or profile not found")
  
-@router.get("/outreach/{user_id}")
-def list_outreach(user_id: str, db: Session = Depends(get_db)):
-    rows = db.query(AthleteOutreach).filter(AthleteOutreach.user_id == user_id).order_by(AthleteOutreach.created_at.desc()).all()
-    return [
-        {
-            "id": str(o.id), "target_description": o.target_description, "to_address": o.to_address,
-            "subject": o.subject, "body": o.body, "cold_call_script": o.cold_call_script,
-            "roadmap_stage": o.roadmap_stage, "roadmap_stage_title": o.roadmap_stage_title,
-            "status": o.status, "created_at": o.created_at.isoformat(),
-        }
-        for o in rows
-    ]
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    listing_dict = {"title": listing.title, "org": listing.org, "tags": listing.tags or []}
+    profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
  
- 
-class EditOutreachIn(BaseModel):
-    subject: str | None = None
-    body: str | None = None
-    to_address: str | None = None
- 
- 
-@router.patch("/outreach/{outreach_id}")
-def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
-    outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
-    if not outreach:
-        raise HTTPException(status_code=404, detail="Outreach draft not found")
-    if outreach.status == "sent":
-        raise HTTPException(status_code=400, detail="Already sent, cannot edit")
-    if payload.subject is not None:
-        outreach.subject = payload.subject
-    if payload.body is not None:
-        outreach.body = payload.body
-    if payload.to_address is not None:
-        outreach.to_address = payload.to_address
-        outreach.address_verified = False
-    db.commit()
-    return {"status": "updated"}
- 
- 
-@router.post("/outreach/{outreach_id}/send")
-def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
-    outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
-    if not outreach:
-        raise HTTPException(status_code=404, detail="Outreach draft not found")
-    if outreach.status == "sent":
-        raise HTTPException(status_code=400, detail="Already sent")
-    try:
-        send_email(outreach.to_address, outreach.subject, outreach.body)
-        outreach.status = "sent"
-        db.commit()
-        return {"status": "sent", "to_address": outreach.to_address}
-    except Exception as e:
-        outreach.status = "failed"
-        db.commit()
-        raise HTTPException(status_code=502, detail=f"Send failed: {e}")
- 
- 
-class ClipEditPlanIn(BaseModel):
-    sport: str
-    level: str
-    career_direction: str
-    clips_description: str
- 
- 
-@router.post("/edit-plan")
-def edit_plan(payload: ClipEditPlanIn):
-    """Not real video editing or processing - there's no video hosting
-    infrastructure in this stack. This is a real, specific edit PLAN
-    grounded in the athlete's own description of their footage, for
-    them to execute in whatever editor they already use.
-    """
-    if not payload.clips_description.strip():
-        raise HTTPException(status_code=400, detail="clips_description is required")
-    try:
-        plan = generate_clip_edit_plan(
-            client, payload.sport, payload.level, payload.career_direction, payload.clips_description
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate an edit plan just now: {e}")
-    return plan
- 
+    explanation = explain_outcome_deep(
+        client, listing_dict, app_record.draft_content,
+        float(app_record.confidence_pct or 0), outcome.status, profile_dict,
+    )
+    return {"application_id": application_id, "outcome_status": outcome.status, "explanation": explanation}
