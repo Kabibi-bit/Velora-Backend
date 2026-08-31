@@ -255,3 +255,27 @@ def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(ge
     entry_dicts = [{"raw_description": e.raw_description} for e in entries]
     return build_skills_section({"skills": profile.skills}, entry_dicts)
  
+ 
+@router.post("/{user_id}/skills/remove")
+def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db)):
+    """The other half of the add endpoint above - removing a skill
+    someone added by mistake, or one they no longer want claimed,
+    should be exactly as easy as adding it was. Without this, the
+    one-click add action would be one-way: easy to add a skill with
+    a single click, no way to undo it short of editing the raw
+    comma-separated string some other way. Reuses SkillAddIn since
+    the payload shape (just a skill name) is identical.
+    """
+    from app.services.resume_builder import remove_skill_from_skills_string, build_skills_section
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile found for this user")
+ 
+    profile.skills = remove_skill_from_skills_string(profile.skills, body.skill)
+    db.commit()
+ 
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    entry_dicts = [{"raw_description": e.raw_description} for e in entries]
+    return build_skills_section({"skills": profile.skills}, entry_dicts)
+ 
