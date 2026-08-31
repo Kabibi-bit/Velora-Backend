@@ -269,3 +269,24 @@ def add_skill_to_skills_string(current_skills: str, new_skill: str) -> str:
         return current_skills
     existing.append(new_skill)
     return ", ".join(existing)
+ 
+ 
+def remove_skill_from_skills_string(current_skills: str, skill_to_remove: str) -> str:
+    """The other half of the skills panel's add action - removing a
+    skill someone added by mistake, or one they no longer want
+    claimed, should be exactly as easy as adding it was. Without
+    this, the one-click "add this suggestion" action (see
+    add_skill_to_skills_string) would be one-way: easy to add a skill
+    with a single click, no way to undo it short of manually editing
+    the whole comma-separated string elsewhere. Case-insensitive
+    match, same as the add path, so removing "python" also removes
+    an entry stored as "Python".
+    """
+    current_skills = current_skills or ""
+    skill_to_remove = (skill_to_remove or "").strip()
+    if not skill_to_remove:
+        return current_skills
+    existing = [s.strip() for s in current_skills.split(",") if s.strip()]
+    remaining = [s for s in existing if s.lower() != skill_to_remove.lower()]
+    return ", ".join(remaining)
+ 
