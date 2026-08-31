@@ -229,6 +229,8 @@ class OutreachEmail(Base):
     body = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="drafted")  # drafted / sent / failed
     auto_generated = Column(Boolean, nullable=False, default=False)
+    ceo_grounded = Column(Boolean, nullable=False, default=False)  # True only if a real, current CEO statement was found and referenced
+    ceo_research_sources = Column(JSONB, nullable=True)  # [{url, title}] - the real sources behind a ceo_grounded draft, for the recipient's own verification
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
