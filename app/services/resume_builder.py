@@ -1,3 +1,4 @@
+
 """Turns a person's own real, plain-language account of their
 experience into strong resume language - never generates a work
 history from scratch.
@@ -40,6 +41,7 @@ _STOPWORDS = {
     "worked", "helped", "managed", "assisted", "performed", "provided",
     "responsible", "duties", "tasks", "position", "store", "organized",
     "ensured", "maintained", "conducted", "completed", "supported",
+    "findings", "hires", "machine", "orders", "reports", "records", "requests",
     # Common irregular past-tense verbs - a real description almost
     # always narrates what someone DID ("wrote", "led", "built",
     # "grew", "sold"), and none of these are skills themselves, but
@@ -350,4 +352,3 @@ def remove_skill_from_skills_string(current_skills: str, skill_to_remove: str) -
     existing = [s.strip() for s in current_skills.split(",") if s.strip()]
     remaining = [s for s in existing if s.lower() != skill_to_remove.lower()]
     return ", ".join(remaining)
- 
