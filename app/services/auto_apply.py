@@ -23,7 +23,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = int(os.getenv("AUTO_APPLY_THRESHOLD", "80"))
 UNDO_WINDOW_MINUTES = int(os.getenv("UNDO_WINDOW_MINUTES", "30"))
  
  
-def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
+def draft_application(anthropic_client, listing: dict, profile: dict) -> dict:
     """A genuinely tailored cover-letter-style paragraph, not a
     generic template with the company name swapped in. The old
     version only ever knew the job title, org, and a raw skills
@@ -35,7 +35,25 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
     to a real employer representing a real person, so inventing a
     specific accomplishment or project they never mentioned isn't
     just bad writing, it's actually misrepresenting them.
+ 
+    The prompt instruction alone was never verified against a real
+    response before this - drafting one directly, by hand, against
+    this exact prompt surfaced a genuine problem: even written
+    carefully and deliberately, the draft included "this summer",
+    a timing claim present nowhere in the job posting, the profile,
+    or any other source field - inferred from the listing being an
+    internship, with no real basis. That's direct, first-hand
+    evidence the instruction alone isn't reliably sufficient, the
+    same reason a second, deterministic layer already exists for
+    resume bullets and the summary line. Returns {text: str,
+    flagged_terms: list[str]} - flagged_terms combines genuinely
+    novel numbers (reusing resume_builder.py's proven check) with a
+    small, targeted set of season/timing words that showed up
+    fabricated in that firsthand test - each flagged only if it
+    appears in the draft but nowhere in the real source material.
     """
+    from app.services.resume_builder import _find_fabricated_numbers
+ 
     matched_terms = list(dict.fromkeys((listing.get("goal_match_tags") or []) + (listing.get("skill_match_tags") or [])))
     description = (listing.get("description") or "").strip()
     roadmap_alignment = (listing.get("factors") or {}).get("roadmap_alignment")
@@ -60,9 +78,10 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
         'generic opener like "I am writing to express my interest" or "I am excited to apply for".\n'
         "- Connect the candidate's real stated skills and goal to what THIS role specifically needs - use the "
         "actual overlap identified above rather than just restating a generic skills list.\n"
-        "- Never invent a specific accomplishment, project, metric, company name, or experience the "
-        "candidate didn't actually state here. This may be submitted to a real employer representing a real "
-        "person - vague but honest beats specific but fabricated.\n"
+        "- Never invent a specific accomplishment, project, metric, company name, timeframe (e.g. a season "
+        "or start date), or experience the candidate didn't actually state here, or that this posting didn't "
+        "actually say. This may be submitted to a real employer representing a real person - vague but "
+        "honest beats specific but fabricated.\n"
         '- Avoid AI-cover-letter cliches: no "passionate", "dynamic", "leverage my skills", "I am confident '
         'that", "perfect fit", "I believe I would be a great asset". Write like a specific person actually '
         "wrote this, not a template.\n"
@@ -75,7 +94,22 @@ def draft_application(anthropic_client, listing: dict, profile: dict) -> str:
         max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+ 
+    source_text = " ".join([
+        listing.get("title", ""), listing.get("org", ""), description,
+        profile.get("northstar", ""), profile.get("skills", ""),
+        ", ".join(matched_terms), (roadmap_alignment or {}).get("title", ""),
+    ])
+    flagged = set(_find_fabricated_numbers(source_text, text))
+    _TIMING_TERMS = ("summer", "fall", "autumn", "winter", "spring")
+    text_lower = text.lower()
+    source_lower = source_text.lower()
+    for term in _TIMING_TERMS:
+        if term in text_lower and term not in source_lower:
+            flagged.add(term)
+ 
+    return {"text": text, "flagged_terms": sorted(flagged)}
  
  
 def compute_composite_confidence(match_score_pct: float) -> int:
@@ -209,7 +243,8 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     composite_confidence = compute_composite_confidence(match["score_pct"])
     counterfactual_confidence = compute_composite_confidence(match_no_personalization["score_pct"])
  
-    draft_text = draft_application(anthropic_client, listing_dict, profile_dict)
+    draft_result = draft_application(anthropic_client, listing_dict, profile_dict)
+    draft_text = draft_result["text"]
     user_threshold = profile.auto_apply_threshold if getattr(profile, "auto_apply_threshold", None) else None
     status = decide_auto_send(composite_confidence, threshold=user_threshold)
  
@@ -223,6 +258,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         auto_generated=auto_generated,
         factors_snapshot={**match["factors"], "signal_strength": match["signal_strength"], "factors_engaged": match["factors_engaged"], "data_quality": match.get("data_quality")},
         counterfactual_confidence_pct=counterfactual_confidence,
+        draft_flagged_terms=draft_result["flagged_terms"],
     )
     db.add(app_record)
     db.commit()
@@ -235,6 +271,7 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         "composite_confidence": composite_confidence,
         "status": status,
         "draft": draft_text,
+        "review_note": "This draft includes a number or timing claim that wasn't in the job posting or your profile - double check it before sending." if draft_result["flagged_terms"] else None,
         "already_existed": False,
         "auto_generated": auto_generated,
     }
