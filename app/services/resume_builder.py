@@ -93,10 +93,47 @@ def _find_fabricated_numbers(original: str, polished: str) -> list[str]:
     the original raw_description - a common shape a fabricated metric
     takes (a specific percentage, dollar figure, or count the person
     never actually stated).
+ 
+    Also catches a real, more dangerous class of fabrication that
+    bare digit-matching alone missed: the same number reused with a
+    completely different, fabricated meaning. Verified with concrete
+    scenarios before adding this - "worked there for 2.5 years"
+    becoming "reduced costs by $2.5 thousand", and "helped 20
+    customers a day" becoming "increased satisfaction by 20%", both
+    slipped through entirely undetected under bare-digit matching,
+    since 2.5 and 20 genuinely appear in the original text, just with
+    a completely different, fabricated meaning attached. For any
+    number that carries a $ or % unit marker in the polished text,
+    this additionally requires that same number to carry that same
+    marker somewhere in the original, not just appear as bare digits
+    - a number honestly reused with the same unit (e.g. "$50
+    thousand" staying "$50 thousand") is correctly left alone.
     """
     original_numbers = set(re.findall(r"\d+\.?\d*", original))
-    polished_numbers = set(re.findall(r"\d+\.?\d*", polished))
-    return sorted(polished_numbers - original_numbers)
+    polished_matches = list(re.finditer(r"\d+\.?\d*", polished))
+ 
+    def _unit_context(text: str, number_str: str, start_idx: int) -> tuple[bool, bool]:
+        before = text[max(0, start_idx - 1):start_idx]
+        after_idx = start_idx + len(number_str)
+        after = text[after_idx:after_idx + 1]
+        return before == "$", after == "%"
+ 
+    flagged = set()
+    for m in polished_matches:
+        num = m.group()
+        if num not in original_numbers:
+            flagged.add(num)
+            continue
+        p_dollar, p_percent = _unit_context(polished, num, m.start())
+        if not p_dollar and not p_percent:
+            continue  # no specific unit marker to verify; bare-number matching is enough
+        matching_context_found = any(
+            _unit_context(original, num, om.start()) == (p_dollar, p_percent)
+            for om in re.finditer(re.escape(num), original)
+        )
+        if not matching_context_found:
+            flagged.add(num)
+    return sorted(flagged)
  
  
 def polish_resume_entry(anthropic_client, entry: dict) -> dict:
@@ -123,6 +160,9 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
         "If what they wrote is vague or doesn't include a metric, write a vague-but-honest bullet rather "
         "than inventing a specific one - a real person may submit this to a real employer, and a fabricated "
         "detail here is not a stylistic choice, it's misrepresenting them.\n\n"
+        "No cliches like \"results-driven\", \"team player\", \"go-getter\", \"detail-oriented\", or "
+        "\"leveraged\" as a verb - write like a specific, real person describing specific, real work, not a "
+        "template filled in with generic resume language.\n\n"
         "Return a JSON array of 2-4 bullet point strings, nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
