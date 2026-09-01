@@ -388,6 +388,22 @@ def run_scan_for_all_users():
         except Exception as e:
             print(f"Embedding backfill failed (non-fatal, rest of the scan continues): {e}")
  
+        # Surfaces embeddings health passively in the same logs
+        # someone's already watching for the daily scan, rather than
+        # depending on a separate, remembered check of
+        # /system/embeddings-status - a silent problem here (an
+        # expired key, a Voyage-side account issue) could otherwise
+        # go unnoticed indefinitely. Genuinely silent when everything
+        # is fine - only speaks up when there's something real to say,
+        # the same restraint already applied to the backfill log above.
+        try:
+            from app.services.embeddings import check_embeddings_status
+            embeddings_status = check_embeddings_status()
+            if not embeddings_status["working"]:
+                print(f"WARNING - embeddings not working: {embeddings_status['detail']}")
+        except Exception as e:
+            print(f"Embeddings status check itself failed (non-fatal): {e}")
+ 
         users = db.query(User).join(Profile).filter(Profile.is_current == True).all()  # noqa: E712
         for user in users:
             result = run_scan_for_user(db, str(user.id))
