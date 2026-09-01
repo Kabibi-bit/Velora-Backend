@@ -1,4 +1,3 @@
-
 """Real, live web research grounded in the candidate's actual
 situation - not a generic score, not invented knowledge. Two things
 no mainstream job board does:
@@ -129,6 +128,13 @@ def research_company_leadership(anthropic_client, company_name: str) -> dict:
         "a leader, confirm the company you found them at is genuinely the same one named above, not just a "
         "similarly-named one - if you're not genuinely confident it's the same company, treat it as not "
         "found rather than reporting it anyway.\n\n"
+        "Be equally careful about whether a role is still current - real sources can genuinely disagree, "
+        "for instance a specific announcement of someone starting a role with real quotes, against a more "
+        "general company-overview source whose leadership list doesn't mention them at all, which could "
+        "mean the overview is just incomplete, or could mean the person has since moved on. If you find "
+        "a genuine conflict like this and can't resolve which is more current, don't guess - either treat "
+        "that specific person as not confirmed, or say plainly that their current status is unclear rather "
+        "than reporting stale information as if it were definitely still true.\n\n"
         "Only report real people and real statements you actually find through search. If you can only "
         "confirm the CEO and no other leaders, that's fine - report just the CEO. If you can't find "
         "anything genuinely specific and recent from anyone, say that plainly rather than guessing or "
