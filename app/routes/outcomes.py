@@ -140,6 +140,15 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
         db.query(Application, Listing)
         .join(Listing, Application.listing_id == Listing.id)
         .filter(Application.user_id == user_id)
+        .order_by(Application.created_at)
+        # Without an explicit order, PostgreSQL returns rows in an
+        # unspecified order that "must not be relied on" (per the
+        # official docs) - meaning "Application 3" could genuinely
+        # refer to a different real application between calls, which
+        # would directly undermine the whole point of the model
+        # referencing applications by number and the flagged_insight
+        # check that verifies those references. Ordered by creation
+        # time so the numbering is stable and chronologically sensible.
         .all()
     )
     app_input = [
@@ -180,13 +189,3 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
         .filter(Application.user_id == user_id, Application.factors_snapshot.isnot(None))
         .all()
     )
-    app_input = [
-        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_by_listing_status[str(a.listing_id)]}
-        for a in applications
-        if str(a.listing_id) in outcome_by_listing_status
-    ]
-    from app.services.matching import get_interaction_readiness
-    findings = compute_factor_interactions(app_input)
-    readiness = get_interaction_readiness(app_input)
-    return {"findings": findings, "sample_size": len(app_input), "readiness": readiness}
- 
