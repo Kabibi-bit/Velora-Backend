@@ -1,3 +1,4 @@
+
 """Real auto-apply logic: drafts an application via Claude, decides
 whether it's confident enough to auto-send or needs human review,
 and enforces an undo window before anything is considered final.
@@ -459,7 +460,8 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
             "candidate's background - naturally in the email, genuinely connecting it to why this "
             "candidate's real background makes them worth a conversation, not just name-dropping it. Do "
             "not quote anyone's exact original words at length - paraphrase the idea, same as it was "
-            "paraphrased above."
+            "paraphrased above, including any short, catchy phrase a leader coined for their own idea. "
+            "Describe what it means rather than reproducing it in quotation marks, even briefly."
         )
     else:
         research_block = (
@@ -516,3 +518,4 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         "leadership_grounded": grounded,
         "leaders": [l.get("name") for l in leaders],
     }
+ 
