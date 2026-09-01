@@ -370,6 +370,24 @@ def run_scan_for_all_users():
         new_count = asyncio.run(_pull_and_store_new_listings(db))
         print(f"Pulled {new_count} new listings.")
  
+        # Runs automatically every day rather than depending on a
+        # human remembering the manual /system/backfill-embeddings
+        # endpoint exists - the self-healing this function offers was
+        # real, but genuinely unreachable without that reminder,
+        # inconsistent with the rest of this system's design ("fires
+        # even if nobody opens the app that day"). Cheap and safe to
+        # run daily: capped at 100 rows, a genuine no-op query when
+        # there's nothing to backfill. Isolated in its own try/except
+        # so a real failure here can never cancel user rescoring or
+        # Auto Apply below it, the same isolation already applied to
+        # the ingestion loops above.
+        try:
+            backfill_result = backfill_missing_embeddings(db)
+            if backfill_result["attempted"] > 0:
+                print(f"Embedding backfill: {backfill_result['detail']}")
+        except Exception as e:
+            print(f"Embedding backfill failed (non-fatal, rest of the scan continues): {e}")
+ 
         users = db.query(User).join(Profile).filter(Profile.is_current == True).all()  # noqa: E712
         for user in users:
             result = run_scan_for_user(db, str(user.id))
