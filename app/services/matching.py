@@ -1,3 +1,4 @@
+
 """Matching engine: scores listings against a user's profile.
  
 Every factor that shows up in the explanation is a real input to the
@@ -675,6 +676,43 @@ def get_personalized_factor_weights(db_applications: list[dict]) -> dict:
     route layer for how this join is actually built.
     """
     return compute_factor_reliability(db_applications)
+ 
+ 
+def get_factor_reliability_detail(applications_with_outcomes: list[dict]) -> dict:
+    """compute_factor_reliability's own docstring is honest that 1.0
+    means "insufficient data, OR this factor performs at baseline" -
+    but the multiplier dict alone can't tell a person which one is
+    true for a given factor. The same silent-exclusion gap already
+    fixed for the self-audit panel (a person with real outcome data
+    seeing a flat, unexplained "no clear signal") - found here by
+    directly checking this sibling function for the identical
+    pattern, not a new failure mode.
+ 
+    Kept entirely separate from compute_factor_reliability itself,
+    which score_listing and every other real caller depends on
+    returning a plain {factor: float} dict - this exists purely to
+    give the UI something honest to say about EACH factor
+    individually, without touching that shape at all.
+ 
+    Returns {factor_name: {"multiplier": float, "engaged_count": int,
+    "has_enough_data": bool}} - has_enough_data is False exactly when
+    that factor's own multiplier is a genuine default (fewer than 2
+    engaged applications for that specific factor), not a real
+    computed signal, mirroring compute_factor_reliability's own n < 2
+    gate exactly.
+    """
+    multipliers = compute_factor_reliability(applications_with_outcomes)
+    usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
+ 
+    detail = {}
+    for factor in FACTOR_NAMES:
+        engaged_count = sum(1 for a in usable if (a["factors_snapshot"].get(factor) or 0) > 0)
+        detail[factor] = {
+            "multiplier": multipliers.get(factor, 1.0),
+            "engaged_count": engaged_count,
+            "has_enough_data": engaged_count >= 2 and len(usable) >= 3,
+        }
+    return detail
  
  
 def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict:
