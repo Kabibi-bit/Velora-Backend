@@ -189,7 +189,11 @@ async def _pull_and_store_new_listings(db: Session):
         )
         if exists:
             continue
-        tags = await extract_tags(item["description"], anthropic_client)
+        try:
+            tags = await extract_tags(item["description"], anthropic_client)
+        except Exception as e:
+            print(f"  Tag extraction failed for '{item['title']}', storing with no tags rather than losing it: {e}")
+            tags = []
         db.add(Listing(
             source=item["source"], external_id=item["external_id"], title=item["title"],
             org=item["org"], type=item["type"], location=item["location"],
@@ -234,7 +238,10 @@ async def _pull_and_store_new_listings(db: Session):
     try:
         all_scholarship_raw = []
         for q in SCHOLARSHIP_SEARCH_QUERIES:
-            all_scholarship_raw.extend(await discover_scholarships_via_search(anthropic_client, q))
+            try:
+                all_scholarship_raw.extend(await discover_scholarships_via_search(anthropic_client, q))
+            except Exception as e:
+                print(f"  Scholarship search '{q}' failed, skipping it for today: {e}")
         # Real, visible rejection reasons rather than silently
         # discarding them - the same "make it visible, not silent"
         # principle already applied to candidate match transparency
@@ -283,7 +290,11 @@ async def _pull_and_store_new_listings(db: Session):
             )
             if exists:
                 continue
-            tags = await extract_tags(item["description"], anthropic_client)
+            try:
+                tags = await extract_tags(item["description"], anthropic_client)
+            except Exception as e:
+                print(f"  Tag extraction failed for '{item['title']}', storing with no tags rather than losing it: {e}")
+                tags = []
             tags = list(set(tags + ["athletics"]))  # ensure it's always discoverable by the athletics filter
             db.add(Listing(
                 source=item["source"], external_id=item["external_id"], title=item["title"],
