@@ -122,14 +122,32 @@ def generate_resume(user_id: str, db: Session = Depends(get_db)):
         polished_entries = []
         entries_snapshot = []
         for e in entry_dicts:
-            result = polish_resume_entry(client, e)
+            try:
+                result = polish_resume_entry(client, e)
+            except Exception as polish_error:
+                # One entry's transient failure (a temporary API issue)
+                # must not fail the person's entire resume request when
+                # their other entries would have succeeded fine - falls
+                # back to their own real, honest raw description as a
+                # single bullet rather than silently dropping this real
+                # work experience from their resume.
+                print(f"  Polishing failed for entry '{e['title']}', falling back to their raw description: {polish_error}")
+                result = {"bullets": [e["raw_description"]] if e["raw_description"] else [], "flagged_numbers": []}
             polished_entries.append({
                 "entry_id": e["id"], "title": e["title"], "org": e["org"],
                 "dates": f'{e["start_date"] or ""} - {e["end_date"] or ""}'.strip(" -"),
                 "bullets": result["bullets"], "flagged_numbers": result["flagged_numbers"],
             })
             entries_snapshot.append({"entry_id": e["id"], "raw_description": e["raw_description"]})
-        summary_result = generate_resume_summary(client, profile_dict, entry_dicts)
+        try:
+            summary_result = generate_resume_summary(client, profile_dict, entry_dicts)
+        except Exception as summary_error:
+            # A summary-generation failure must not discard every entry
+            # that was just successfully polished above - the same
+            # principle as the per-entry fallback, applied to the one
+            # remaining single point of failure in this same request.
+            print(f"  Summary generation failed, falling back to no summary line rather than losing the polished entries: {summary_error}")
+            summary_result = {"summary": "", "flagged_numbers": []}
         summary_line = summary_result["summary"]
         summary_flagged_numbers = summary_result["flagged_numbers"]
     except Exception as e:
@@ -306,3 +324,4 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
     entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
     entry_dicts = [{"raw_description": e.raw_description} for e in entries]
     return build_skills_section({"skills": profile.skills}, entry_dicts)
+ 
