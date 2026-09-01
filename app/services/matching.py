@@ -654,9 +654,15 @@ def compute_factor_reliability(applications_with_outcomes: list[dict], as_of: "d
         engaged_positive_weight = sum(w for a, w in engaged if a["outcome_status"] in POSITIVE_STATUSES)
         engaged_rate = engaged_positive_weight / engaged_weight if engaged_weight > 0 else 0
         raw_multiplier = engaged_rate / baseline_rate if baseline_rate > 0 else 1.0
-        # Same confidence-weighted shrinkage discipline as the tag
-        # learner: a multiplier built from 2 outcomes should barely
-        # move from neutral; one built from 15 can move more.
+        # Deliberately MORE conservative than get_tag_weights_from_outcomes'
+        # n/(n+2) - not a copy of it, and not drift from it either. A
+        # multiplier here applies across every future score for this
+        # person, not just one tag's weight, so being wrong has a
+        # wider blast radius than being wrong about a single tag - a
+        # higher confidence bar before trusting it is a deliberate
+        # choice, matching this function's own framing above as a
+        # genuinely higher-order signal, not a like-for-like sibling
+        # of the tag learner.
         confidence = n / (n + 3)
         shrunk_multiplier = 1.0 + (raw_multiplier - 1.0) * confidence
         multipliers[factor] = round(max(0.3, min(2.0, shrunk_multiplier)), 3)  # bounded - never zero out or triple-count a factor entirely from heuristic learning alone
