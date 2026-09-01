@@ -165,9 +165,21 @@ async def _pull_and_store_new_listings(db: Session):
     # JOB_SEARCH_QUERIES, not just one hardcoded term, then merged
     # and deduped by (source, external_id) before any DB writes or
     # paid tag-extraction calls happen on a listing twice.
+    #
+    # Each query is isolated with its own try/except - confirmed by
+    # tracing the real exception path that a single query's failure
+    # (a transient network issue, a temporary Adzuna-side error) would
+    # otherwise propagate all the way up through this function to
+    # run_scan_for_all_users' outer handler, aborting the ENTIRE daily
+    # scan: every remaining Adzuna and athletic query, every user's
+    # rescoring, and every user's Auto Apply run for that day - not
+    # just the one query that actually failed.
     all_adzuna_raw = []
     for q in JOB_SEARCH_QUERIES[:job_query_budget]:
-        all_adzuna_raw.extend(await fetch_adzuna(q))
+        try:
+            all_adzuna_raw.extend(await fetch_adzuna(q))
+        except Exception as e:
+            print(f"  Adzuna query '{q}' failed, skipping it for today: {e}")
     adzuna_normalized = dedupe_listings([normalize_adzuna(r) for r in all_adzuna_raw])
     for item in adzuna_normalized:
         exists = (
