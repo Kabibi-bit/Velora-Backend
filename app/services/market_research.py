@@ -1,3 +1,4 @@
+
 """Real, live web research grounded in the candidate's actual
 situation - not a generic score, not invented knowledge. Two things
 no mainstream job board does:
@@ -123,6 +124,11 @@ def research_company_leadership(anthropic_client, company_name: str) -> dict:
         "company's blog or elsewhere. Look for real statements about what they're building toward, what "
         "they care about, or specific priorities they've mentioned - not generic corporate mission-"
         "statement language.\n\n"
+        "Be careful about company name collisions - a search for a smaller or less-documented company can "
+        "genuinely surface other, unrelated companies with a similar or overlapping name. Before reporting "
+        "a leader, confirm the company you found them at is genuinely the same one named above, not just a "
+        "similarly-named one - if you're not genuinely confident it's the same company, treat it as not "
+        "found rather than reporting it anyway.\n\n"
         "Only report real people and real statements you actually find through search. If you can only "
         "confirm the CEO and no other leaders, that's fine - report just the CEO. If you can't find "
         "anything genuinely specific and recent from anyone, say that plainly rather than guessing or "
