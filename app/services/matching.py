@@ -1,4 +1,3 @@
-
 """Matching engine: scores listings against a user's profile.
  
 Every factor that shows up in the explanation is a real input to the
@@ -748,6 +747,7 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
     return {
         "verdict": verdict,
         "sample_size": len(comparable),
+        "total_with_data": len(applications_with_outcomes),
         "personalized_avg_error": round(personalized_loss, 2),
         "baseline_avg_error": round(baseline_loss, 2),
         "improvement": round(improvement, 2),
