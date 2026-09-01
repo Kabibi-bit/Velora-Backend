@@ -907,12 +907,42 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
         model="claude-sonnet-4-6", max_tokens=700,
         messages=[{"role": "user", "content": prompt}],
     )
-    import json
+    import json, re
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = json.loads(text)
     parsed["sample_size"] = len(usable)
     parsed["note"] = None
+ 
+    # Confidence normalization - confirmed via the real UI consumer
+    # (overview.html's confidenceLabel lookup) that an unexpected
+    # value here doesn't error, it silently drops the confidence tag
+    # from the page entirely with no visible sign anything went
+    # wrong. Normalizes case/whitespace and falls back to the most
+    # conservative label rather than the riskiest failure mode -
+    # showing no confidence signal at all when one was requested.
+    confidence = str(parsed.get("confidence", "")).strip().lower()
+    parsed["confidence"] = confidence if confidence in ("low", "moderate", "high") else "low"
+ 
+    # Application-number hallucination check - verified by hand that
+    # a genuinely careful, correct response references real
+    # applications this way ("(1 and 3)", "applications 2 and 4"),
+    # so this deliberately covers more than the narrow "Application N"
+    # phrasing alone would. Never edits the insight text itself (the
+    # UI renders these as plain strings) - only surfaces which
+    # insights, if any, pointed outside the real 1..N range actually
+    # provided, so the caller can decide how to handle it rather than
+    # silently trusting an out-of-range reference.
+    valid_range = range(1, len(usable) + 1)
+    flagged_insight_indices = []
+    for i, insight in enumerate(parsed.get("insights") or []):
+        refs = set(int(n) for n in re.findall(r"[Aa]pplications?\s*#?(\d+)", insight))
+        for paren_group in re.findall(r"\(([^)]*\d[^)]*)\)", insight):
+            refs.update(int(n) for n in re.findall(r"\d+", paren_group))
+        if any(r not in valid_range for r in refs):
+            flagged_insight_indices.append(i)
+    parsed["flagged_insight_indices"] = flagged_insight_indices
+ 
     return parsed
  
  
