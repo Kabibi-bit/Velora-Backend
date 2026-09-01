@@ -1,3 +1,4 @@
+
 """Matching engine: scores listings against a user's profile.
  
 Every factor that shows up in the explanation is a real input to the
@@ -708,7 +709,16 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
         and abs(float(a["confidence_pct"]) - float(a["counterfactual_confidence_pct"])) >= 3
     ]
     if len(comparable) < 3:
-        return {"verdict": "insufficient_data", "sample_size": len(comparable), "note": f"Not enough applications yet where personalization actually changed the score by a meaningful amount - need at least 3 to draw a real conclusion, have {len(comparable)}."}
+        total_with_data = len(applications_with_outcomes)
+        if total_with_data > len(comparable):
+            note = (
+                f"You have {total_with_data} applications with a real, logged outcome, but personalization "
+                f"hasn't meaningfully changed the score on enough of them yet to draw a real conclusion - "
+                f"only {len(comparable)} moved by 3 points or more, need at least 3 of those."
+            )
+        else:
+            note = f"Not enough applications yet where personalization actually changed the score by a meaningful amount - need at least 3 to draw a real conclusion, have {len(comparable)}."
+        return {"verdict": "insufficient_data", "sample_size": len(comparable), "note": note}
  
     personalized_loss = sum(loss(float(a["confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
     baseline_loss = sum(loss(float(a["counterfactual_confidence_pct"]), a["outcome_status"] in POSITIVE_STATUSES) for a in comparable) / len(comparable)
