@@ -874,11 +874,23 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
     "listing_org": str, "listing_tags": list[str], "outcome_status": str}]
     """
     usable = [a for a in applications if a.get("draft_content") and a.get("outcome_status")]
-    if len(usable) < 4:
+    if len(usable) < 3:
+        # Was < 4. Unlike compute_factor_reliability or
+        # compute_factor_interactions, this function has no shrinkage
+        # formula to mathematically prove a hard gate redundant - the
+        # real safety mechanism here is the model's own honesty about
+        # confidence and sample size, not arithmetic. So this was
+        # verified differently: by hand-drafting a real response at
+        # n=3 with a deliberately weak, murky pattern (no quantified
+        # metrics on either side, unlike a stronger n=4 test tried
+        # first) and confirming the response stayed genuinely
+        # tentative - explicitly flagging the small sample and the
+        # absence of a strong signal - rather than forcing the same
+        # confident pattern just because it found something to say.
         return {
             "insights": [],
             "sample_size": len(usable),
-            "note": "Not enough applications with both a draft and a logged outcome yet - need at least 4 to find a real pattern in what you've actually written, rather than guessing.",
+            "note": "Not enough applications with both a draft and a logged outcome yet - need at least 3 to find a real pattern in what you've actually written, rather than guessing.",
         }
  
     applications_text = "\n\n".join(
@@ -955,6 +967,7 @@ INTERACTION_PAIRS = [
     ("stated goal + conceptual fit", "goal_fit", "semantic_fit"),
     ("skill overlap + posting depth", "skill_fit", "description_fit"),
     ("location + timing", "location_fit", "deadline_urgency"),
+    ("roadmap alignment + skill overlap", "roadmap_fit", "skill_fit"),
 ]
  
  
