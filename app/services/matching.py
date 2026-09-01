@@ -627,7 +627,13 @@ def compute_factor_reliability(applications_with_outcomes: list[dict], as_of: "d
         return _recency_decay((as_of - outcome_date).days)
  
     usable = [a for a in applications_with_outcomes if a.get("factors_snapshot")]
-    if len(usable) < 4:
+    if len(usable) < 3:
+        # Was < 4 - verified redundant with the per-factor shrinkage
+        # below, the same way interaction-effect detection and the
+        # self-audit's hard gates were: at n=3, confidence = 3/(3+3)
+        # = 0.5, which already requires the engaged rate to be 1.6x
+        # baseline just to produce a modest 1.3x multiplier - a real,
+        # substantial signal requirement, not a trivial one.
         return {f: 1.0 for f in FACTOR_NAMES}  # too little data to trust any personalization yet
  
     weights = [_decay_for(a) for a in usable]
