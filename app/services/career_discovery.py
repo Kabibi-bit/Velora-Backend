@@ -25,6 +25,15 @@ _GENERIC_PREFIX_EXCLUSIONS = {
     # both would have over-matched almost any listing tagged with
     # the longer word, regardless of real relevance.
     "lead", "position",
+    # Found by systematically testing candidate generic words against
+    # every real tag in CAREER_DIRECTIONS, the same sweep that found
+    # the entries above: "business" is a genuine, literal prefix of
+    # "businessdevelopment", but someone typing "I want a career in
+    # business" is extremely common, vague phrasing that applies just
+    # as plausibly to finance, product strategy, or marketing as it
+    # does to sales specifically - the same over-broad-match problem
+    # "people" was excluded for, not a genuinely sales-specific signal.
+    "business",
 }
  
 CAREER_DIRECTIONS = [
