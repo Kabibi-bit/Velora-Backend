@@ -1,4 +1,3 @@
-
 """Turns a person's own real, plain-language account of their
 experience into strong resume language - never generates a work
 history from scratch.
@@ -60,6 +59,20 @@ _STOPWORDS = {
     # verb or adverb) despite clearly not being skills.
     "while", "across", "through", "during", "within", "toward",
     "against", "between", "before", "after",
+    # More irregular past-tense verbs found via systematically testing
+    # candidate words against the real filter, the same way the first
+    # batch above was found - none end in -ed/-ly so the suffix rule
+    # misses them, and none are skills themselves.
+    "read", "sent", "paid", "lost", "shot", "stood", "understood",
+    # Generic adjectives and frequency adverbs - real words someone
+    # might genuinely write ("did a great job", "worked hard"), but
+    # not specific enough to be an actionable skill suggestion, the
+    # same reasoning as excluding "very"/"more"/"most" above.
+    "great", "good", "strong", "hard", "able", "often", "never", "always",
+    # Quantifiers and generic filler nouns, extending the existing
+    # "several/multiple/various/many/much/some" and "team/people/
+    # company" categories with more found via the same testing.
+    "lots", "plenty", "thing", "stuff", "part", "parts", "side", "area", "areas",
 }
  
  
@@ -163,6 +176,10 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
         "what they actually wrote - stronger action verbs, tighter and more concrete language, standard "
         "resume conventions. You may NEVER add a specific number, percentage, dollar amount, team size, "
         "tool, responsibility, or outcome that isn't already stated or clearly implied in what they wrote. "
+        "This includes an unstated causal step connecting two things they mentioned separately - if they "
+        "said they built a feedback mechanism AND separately that something is still in use, do not write "
+        "that the feedback was used to improve it unless they actually said that connection happened; state "
+        "the two real things they said, not a process linking them that you're inferring. "
         "If what they wrote is vague or doesn't include a metric, write a vague-but-honest bullet rather "
         "than inventing a specific one - a real person may submit this to a real employer, and a fabricated "
         "detail here is not a stylistic choice, it's misrepresenting them.\n\n"
@@ -352,3 +369,4 @@ def remove_skill_from_skills_string(current_skills: str, skill_to_remove: str) -
     existing = [s.strip() for s in current_skills.split(",") if s.strip()]
     remaining = [s for s in existing if s.lower() != skill_to_remove.lower()]
     return ", ".join(remaining)
+ 
