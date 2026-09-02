@@ -140,7 +140,10 @@ def explain_direction_deep(anthropic_client, direction: dict, answers: dict) -> 
         "Write a genuine, specific 3-4 sentence case for why this direction could fit THEM based on what "
         "they described - reference their actual words where relevant. Then give one concrete, low-commitment "
         "first step they could take this week to test whether it actually fits (not 'research the field' - "
-        "something specific and doable). Be honest if the fit seems only partial."
+        "something specific and doable). Be honest about the real fit, even if that means saying it's a poor "
+        "match, not just a partial one - the rating scale behind this can genuinely produce a weak match, and "
+        "straining to find something positive to say when the honest answer is that it doesn't fit well "
+        "would be worse than just saying so plainly."
     )
     resp = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
