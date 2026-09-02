@@ -226,14 +226,17 @@ def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depen
  
     try:
         uuid_module.UUID(listing_id)
+        uuid_module.UUID(user_id)
     except ValueError:
-        # A malformed listing_id (not just a valid-but-nonexistent
-        # one) would otherwise reach the DB query below and raise a
-        # raw, unhandled database exception - verified directly
-        # against real SQLAlchemy/psycopg2 behavior before adding
-        # this check, since listing_id is a user-controllable URL
-        # path parameter, not something this endpoint can trust is
-        # always well-formed.
+        # A malformed listing_id or user_id (not just a valid-but-
+        # nonexistent one) would otherwise reach the DB query below
+        # and raise a raw, unhandled database exception - verified
+        # directly against real SQLAlchemy/psycopg2 behavior before
+        # adding this check, since both are user-controllable URL
+        # path parameters, not something this endpoint can trust is
+        # always well-formed. ResumeEntry.user_id is the identical
+        # UUID(as_uuid=True) column type as Listing.id, so the same
+        # risk applies to both, not just the one caught first.
         raise HTTPException(status_code=404, detail="Listing not found")
  
     entries = (
