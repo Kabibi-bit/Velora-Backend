@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
@@ -8,7 +8,7 @@ import anthropic
  
 from app.db import get_db
 from app.models.db_models import SocialPost
-from app.services.auth import require_auth_for_user
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from app.services.social import reflect_on_journal_entry, reflect_on_entry_pattern
  
 router = APIRouter(prefix="/social", tags=["social"])
@@ -24,7 +24,7 @@ class PostIn(BaseModel):
  
  
 @router.post("/posts")
-def create_post(payload: PostIn, db: Session = Depends(get_db)):
+def create_post(payload: PostIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Adds an entry to the user's own private progress journal.
     Works the same way for all 4 roles - tag_value/tag_label are
     generic (a roadmap stage for candidate/athlete, a hiring-pipeline
@@ -32,6 +32,7 @@ def create_post(payload: PostIn, db: Session = Depends(get_db)):
     link to wherever the person already hosts their video (YouTube,
     Loom, etc.) - no upload/hosting is done here.
     """
+    verify_token_belongs_to_user(payload.user_id, authorization)
     if not payload.body or not payload.body.strip():
         raise HTTPException(status_code=400, detail="Entry body cannot be empty")
     post = SocialPost(
@@ -78,10 +79,11 @@ class EditPostIn(BaseModel):
  
  
 @router.patch("/posts/{post_id}")
-def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db)):
+def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
+    verify_token_belongs_to_user(str(post.user_id), authorization)
     if not payload.body or not payload.body.strip():
         raise HTTPException(status_code=400, detail="Entry body cannot be empty")
     post.body = payload.body.strip()
@@ -91,10 +93,11 @@ def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db)):
  
  
 @router.delete("/posts/{post_id}")
-def delete_post(post_id: str, db: Session = Depends(get_db)):
+def delete_post(post_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
+    verify_token_belongs_to_user(str(post.user_id), authorization)
     db.delete(post)
     db.commit()
     return {"status": "deleted"}
@@ -106,7 +109,7 @@ class ReflectIn(BaseModel):
  
  
 @router.post("/posts/{post_id}/reflect")
-def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_db)):
+def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """An honest, specific AI reflection on ONE journal entry. Takes
     focus/context_summary directly in the request rather than looking
     up a stored profile, since only candidates have a Profile table -
@@ -116,6 +119,7 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
+    verify_token_belongs_to_user(str(post.user_id), authorization)
     try:
         reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
     except Exception as e:
