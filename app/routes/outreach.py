@@ -128,6 +128,8 @@ def list_outreach(user_id: str, db: Session = Depends(get_db)):
             "body": o.body,
             "status": o.status,
             "auto_generated": o.auto_generated,
+            "leadership_grounded": o.leadership_grounded,
+            "leadership_research_sources": o.leadership_research_sources or [],
             "created_at": o.created_at.isoformat(),
         }
         for o, l in rows
