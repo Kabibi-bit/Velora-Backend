@@ -1,3 +1,4 @@
+
 """Background job that scans real listings daily and re-scores them
 for every user with an active profile. This is what makes the
 "continuous overnight watch" real instead of a UI animation.
@@ -28,7 +29,7 @@ from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import SessionLocal
-from app.models.db_models import User, Profile, Listing, MatchScore
+from app.models.db_models import User, Profile, Listing, MatchScore, Notification
 from app.services.ingestion import (
     fetch_adzuna, normalize_adzuna, dedupe_listings, extract_tags,
     fetch_simplify_internships, parse_simplify_markdown,
@@ -433,6 +434,30 @@ def run_scan_for_all_users():
                         outreach_count += 1
                 print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
                 print(f"    Auto Outreach: {outreach_count} new outreach draft(s) queued for {user.email}")
+                # Closes a real, confirmed gap: notifications.py's own
+                # docstring already claimed the scheduler "would call
+                # this directly," but it never actually did - meaning
+                # a person's Inbox page had nothing real to show for
+                # the one job that's supposed to work even when
+                # nobody's watching. Wrapped in its own try/except so
+                # a genuine notification-write failure can never
+                # retroactively undo the real scan work above it.
+                try:
+                    if auto_count > 0:
+                        db.add(Notification(
+                            user_id=user.id, type="auto_apply",
+                            title=f"Auto Apply: {auto_count} new application{'s' if auto_count != 1 else ''} auto-approved",
+                        ))
+                    if outreach_count > 0:
+                        db.add(Notification(
+                            user_id=user.id, type="auto_apply",
+                            title=f"Auto Apply: {outreach_count} outreach email{'s' if outreach_count != 1 else ''} drafted",
+                            detail="Review and send from the Workshop whenever you're ready.",
+                        ))
+                    if auto_count > 0 or outreach_count > 0:
+                        db.commit()
+                except Exception as e:
+                    print(f"    Notification write failed (non-fatal): {e}")
         print("Daily scan complete.")
  
         # Closes a real gap: neither this scheduled job nor the manual
@@ -455,11 +480,23 @@ def run_scan_for_all_users():
                 .all()
             )
             sent_count = 0
+            sent_counts_by_user = {}
             for app_record in due_to_send:
                 app_record.status = "sent"
                 app_record.sent_at = now
                 sent_count += 1
+                sent_counts_by_user[app_record.user_id] = sent_counts_by_user.get(app_record.user_id, 0) + 1
             if sent_count > 0:
+                # A notification is inherently per-user - sent_count
+                # itself is a global total across this bulk query, so
+                # grouping by each application's real, individual
+                # owner and notifying each affected user with their
+                # own genuine count is the only correct approach here.
+                for uid, count in sent_counts_by_user.items():
+                    db.add(Notification(
+                        user_id=uid, type="auto_apply",
+                        title=f"Auto-send: {count} approved application{'s' if count != 1 else ''} past your undo window, now sent",
+                    ))
                 db.commit()
                 print(f"Auto-send: {sent_count} approved application(s) past their undo window, now genuinely sent.")
         except Exception as e:
