@@ -8,7 +8,7 @@ import anthropic
 from app.db import get_db
 from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary
 from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
-from app.services.matching import rank_listings
+from app.services.matching import rank_listings, _terms_match
  
 router = APIRouter(prefix="/roadmap", tags=["roadmap"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -51,7 +51,7 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
     freq = {}
     for listing in ranked:
         for tag in listing.get("tags", []):
-            known = any(t in tag or tag in t for t in skill_tokens) or any(t in tag or tag in t for t in goal_tokens)
+            known = any(_terms_match(t, tag) for t in skill_tokens) or any(_terms_match(t, tag) for t in goal_tokens)
             if not known:
                 freq[tag] = freq.get(tag, 0) + 1
     return [tag for tag, _ in sorted(freq.items(), key=lambda kv: -kv[1])[:4]]
