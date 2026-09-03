@@ -110,7 +110,10 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
-    reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
+    try:
+        reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate a reflection just now - try again. ({e})")
     return {"post_id": post_id, "reflection": reflection}
  
  
@@ -137,6 +140,9 @@ def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depen
         raise HTTPException(status_code=400, detail="Not enough entries yet for a pattern reflection - log a few more first")
  
     entries = [{"body": p.body, "tag_label": p.tag_label} for p in rows]
-    reflection = reflect_on_entry_pattern(client, payload.focus, payload.context_summary, entries)
+    try:
+        reflection = reflect_on_entry_pattern(client, payload.focus, payload.context_summary, entries)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate a pattern reflection just now - try again. ({e})")
     return {"reflection": reflection, "entries_considered": len(entries)}
  
