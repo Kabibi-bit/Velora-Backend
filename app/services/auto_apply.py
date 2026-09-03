@@ -1,4 +1,3 @@
-
 """Real auto-apply logic: drafts an application via Claude, decides
 whether it's confident enough to auto-send or needs human review,
 and enforces an undo window before anything is considered final.
@@ -121,12 +120,21 @@ def draft_application(anthropic_client, listing: dict, profile: dict, resume_ent
         "unless it says something more specific than that.\n\n"
         "Return ONLY the paragraph text, nothing else."
     )
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=400,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    try:
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    except Exception as e:
+        # A genuine failure here (a transient API issue) must not
+        # propagate uncaught - the scheduled job's per-listing loop
+        # that calls this has no protection of its own, so an
+        # uncaught exception here would abort the scan for every
+        # remaining user in the entire system, not just this one
+        # listing or this one user's remaining listings.
+        return {"error": f"draft_generation_failed: {e}"}
  
     source_text = " ".join([
         listing.get("title", ""), listing.get("org", ""), description,
@@ -279,6 +287,8 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
     resume_entry_rows = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
     resume_entry_dicts = [{"title": e.title, "org": e.org, "raw_description": e.raw_description} for e in resume_entry_rows]
     draft_result = draft_application(anthropic_client, listing_dict, profile_dict, resume_entry_dicts)
+    if "error" in draft_result:
+        return {"error": draft_result["error"]}
     draft_text = draft_result["text"]
     user_threshold = profile.auto_apply_threshold if getattr(profile, "auto_apply_threshold", None) else None
     status = decide_auto_send(composite_confidence, threshold=user_threshold)
@@ -359,18 +369,24 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
         "conversation or referral, no generic flattery. Return ONLY valid JSON with exactly two "
         "keys: 'subject' and 'body'. No markdown fences."
     )
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=400,
-        messages=[{"role": "user", "content": prompt}],
-    )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
+        # A genuine failure here (a transient API issue) must not
+        # propagate uncaught - the same severe gap just fixed in
+        # draft_application, this function's sibling. The scheduled
+        # job's per-listing loop that calls this has no protection of
+        # its own, so an uncaught exception here would abort the scan
+        # for every remaining user in the entire system.
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return {"error": "draft_generation_failed"}
+    except Exception as e:
+        return {"error": f"draft_generation_failed: {e}"}
  
     draft = OutreachEmail(
         user_id=user_id,
@@ -481,17 +497,23 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         "or referral, no generic flattery. Return ONLY valid JSON with exactly two keys: 'subject' and "
         "'body'. No markdown fences."
     )
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=400,
-        messages=[{"role": "user", "content": prompt}],
-    )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
+        # Matches the same fix just applied to this function's two
+        # siblings - the calling route already expects an error dict
+        # back (checking .get("error") immediately after this call),
+        # confirming it was designed to fail gracefully. Without this,
+        # a genuine API failure would produce a raw, unhandled 500
+        # instead of the clean error response the route was built to give.
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return {"error": "draft_generation_failed"}
+    except Exception as e:
+        return {"error": f"draft_generation_failed: {e}"}
  
     draft = OutreachEmail(
         user_id=user_id,
