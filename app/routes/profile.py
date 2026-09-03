@@ -180,8 +180,12 @@ def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Sess
     that determines what gets auto-drafted-and-queued during a scan,
     versus what only gets surfaced as a regular match.
     """
-    if payload.threshold < 50 or payload.threshold > 100:
-        raise HTTPException(status_code=400, detail="threshold must be between 50 and 100")
+    if payload.threshold < 50 or payload.threshold > 97:
+        # 97 is the real, hard ceiling every match score is capped at
+        # (see max(35, min(97, ...)) in matching.py) - allowing up to
+        # 100 here meant a threshold could be set that no real match
+        # could ever reach, silently disabling Auto Apply entirely.
+        raise HTTPException(status_code=400, detail="threshold must be between 50 and 97 - 97 is the real ceiling every match score is capped at, so anything higher could never be reached by a real match")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
