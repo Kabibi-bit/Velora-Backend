@@ -31,8 +31,10 @@ def create_post(payload: PostIn, db: Session = Depends(get_db)):
     link to wherever the person already hosts their video (YouTube,
     Loom, etc.) - no upload/hosting is done here.
     """
+    if not payload.body or not payload.body.strip():
+        raise HTTPException(status_code=400, detail="Entry body cannot be empty")
     post = SocialPost(
-        user_id=payload.user_id, body=payload.body, video_url=payload.video_url,
+        user_id=payload.user_id, body=payload.body.strip(), video_url=payload.video_url,
         tag_value=payload.tag_value, tag_label=payload.tag_label,
     )
     db.add(post)
@@ -79,7 +81,9 @@ def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db)):
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
-    post.body = payload.body
+    if not payload.body or not payload.body.strip():
+        raise HTTPException(status_code=400, detail="Entry body cannot be empty")
+    post.body = payload.body.strip()
     post.edited_at = datetime.utcnow()
     db.commit()
     return {"status": "updated"}
