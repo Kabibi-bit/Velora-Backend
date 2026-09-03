@@ -80,7 +80,16 @@ def generate_interview_prep(anthropic_client, company_name: str, role_title: str
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    parsed = json.loads(text)
+    # A genuinely valid-JSON-but-incomplete response (missing a key, or
+    # the wrong type for one) must not be returned as if it were
+    # complete - the exact same gap already fixed on the frontend's
+    # generateInterviewPrep. json.loads succeeding here doesn't
+    # guarantee the shape the caller and the frontend both depend on.
+    required_list_keys = ("likely_questions", "talking_points", "questions_to_ask")
+    if not all(isinstance(parsed.get(k), list) for k in required_list_keys) or not isinstance(parsed.get("roadmap_connection"), str):
+        raise ValueError(f"Interview prep response had an unexpected shape: {parsed}")
+    return parsed
  
  
 def research_company_leadership(anthropic_client, company_name: str) -> dict:
