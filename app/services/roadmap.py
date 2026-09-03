@@ -81,7 +81,22 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
     )
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    parsed = json.loads(text)
+    # A genuinely valid-JSON-but-incomplete response must not be
+    # returned as if it were complete - confirmed this had zero shape
+    # validation, meaning a milestone genuinely missing "title" or
+    # "stage" would raise an uncaught KeyError the moment the caller
+    # accessed it, producing a raw 500 for this central feature.
+    required_milestone_keys = (
+        "title", "description", "success_criteria", "estimated_timeframe",
+        "first_action", "resource", "risk", "if_it_works", "if_it_stalls", "stage",
+    )
+    if not isinstance(parsed.get("summary"), str) or not isinstance(parsed.get("milestones"), list) or not parsed["milestones"]:
+        raise ValueError(f"Roadmap response had an unexpected shape: {parsed}")
+    for m in parsed["milestones"]:
+        if not isinstance(m, dict) or not all(k in m for k in required_milestone_keys):
+            raise ValueError(f"A roadmap milestone had an unexpected shape: {m}")
+    return parsed
  
  
 def explain_listing_against_roadmap(anthropic_client, listing: dict, roadmap: list[dict], profile: dict) -> str:
