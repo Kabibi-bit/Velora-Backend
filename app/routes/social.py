@@ -8,6 +8,7 @@ import anthropic
  
 from app.db import get_db
 from app.models.db_models import SocialPost
+from app.services.auth import require_auth_for_user
 from app.services.social import reflect_on_journal_entry, reflect_on_entry_pattern
  
 router = APIRouter(prefix="/social", tags=["social"])
@@ -56,7 +57,7 @@ def _serialize_post(p: SocialPost) -> dict:
  
  
 @router.get("/posts/{user_id}")
-def list_journal(user_id: str, search: str | None = None, db: Session = Depends(get_db)):
+def list_journal(user_id: str, search: str | None = None, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lists a user's own journal entries, most recent first. This is
     a private journal, not a feed - it never returns another user's
     entries. Optional `search` filters to entries whose body or tag
@@ -129,7 +130,7 @@ class ReflectPatternIn(BaseModel):
  
  
 @router.post("/posts/{user_id}/reflect-pattern")
-def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depends(get_db)):
+def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The genuinely more valuable reflection - looks across the
     user's last several entries together for a real pattern, instead
     of restating one entry back at them.
