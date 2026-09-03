@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 import anthropic
  
 from app.db import get_db
@@ -54,18 +54,19 @@ def _serialize_post(p: SocialPost) -> dict:
  
  
 @router.get("/posts/{user_id}")
-def list_journal(user_id: str, db: Session = Depends(get_db)):
+def list_journal(user_id: str, search: str | None = None, db: Session = Depends(get_db)):
     """Lists a user's own journal entries, most recent first. This is
     a private journal, not a feed - it never returns another user's
-    entries.
+    entries. Optional `search` filters to entries whose body or tag
+    label contains the given text (case-insensitive) - mirrors the
+    frontend's own search exactly, done server-side instead of
+    filtering a fetched batch client-side.
     """
-    rows = (
-        db.query(SocialPost)
-        .filter(SocialPost.user_id == user_id)
-        .order_by(desc(SocialPost.created_at))
-        .limit(100)
-        .all()
-    )
+    query = db.query(SocialPost).filter(SocialPost.user_id == user_id)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(or_(SocialPost.body.ilike(term), SocialPost.tag_label.ilike(term)))
+    rows = query.order_by(desc(SocialPost.created_at)).limit(100).all()
     return [_serialize_post(p) for p in rows]
  
  
