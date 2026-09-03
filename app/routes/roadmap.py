@@ -1,4 +1,3 @@
-
 import os
 import re
 from fastapi import APIRouter, HTTPException, Depends
@@ -196,5 +195,9 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     ]
     listing_dict = {"title": listing.title, "org": listing.org, "type": listing.type, "tags": listing.tags or []}
  
-    explanation = explain_listing_against_roadmap(client, listing_dict, roadmap_dicts, _profile_to_dict(profile))
-    return {"listing": listing.title, "explanation": explanation
+    try:
+        explanation = explain_listing_against_roadmap(client, listing_dict, roadmap_dicts, _profile_to_dict(profile))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not compare this listing to your roadmap just now - try again. ({e})")
+    return {"listing": listing.title, "explanation": explanation}
+ 
