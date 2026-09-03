@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary
+from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary, SocialPost
 from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
 from app.services.matching import rank_listings, _terms_match
  
@@ -143,6 +143,7 @@ def get_roadmap(user_id: str, db: Session = Depends(get_db)):
  
 class MilestoneStatusIn(BaseModel):
     status: str
+    reflection: str | None = None
  
  
 VALID_MILESTONE_STATUSES = {"planned", "in_progress", "done"}
@@ -152,6 +153,17 @@ VALID_MILESTONE_STATUSES = {"planned", "in_progress", "done"}
 def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
     """Marks real progress on one milestone - this is what makes the
     roadmap a living plan instead of a one-time AI output.
+ 
+    When status genuinely transitions to "done" and the person
+    provides a real reflection in the same request, this also creates
+    a genuine, linked Waypoint journal entry - tagged to this exact
+    milestone's real stage and title, not a generic "write something"
+    prompt. This is what makes Waypoint a natural byproduct of real
+    progress instead of a separate page someone has to remember to
+    visit: the reflection happens right when the real event does,
+    grounded in the actual milestone they just completed. Entirely
+    optional - a bare status update with no reflection behaves
+    exactly as it always has.
     """
     if payload.status not in VALID_MILESTONE_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_MILESTONE_STATUSES}")
@@ -159,8 +171,19 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
     milestone.status = payload.status
+ 
+    journal_entry_id = None
+    if payload.status == "done" and payload.reflection and payload.reflection.strip():
+        post = SocialPost(
+            user_id=milestone.user_id, body=payload.reflection.strip(),
+            tag_value=str(milestone.target_stage), tag_label=milestone.title,
+        )
+        db.add(post)
+        db.flush()  # so post.id is populated before commit, to return it below
+        journal_entry_id = str(post.id)
+ 
     db.commit()
-    return {"status": "updated", "milestone_status": payload.status}
+    return {"status": "updated", "milestone_status": payload.status, "journal_entry_id": journal_entry_id}
  
  
 @router.get("/{user_id}/explain/{listing_id}")
@@ -200,4 +223,3 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not compare this listing to your roadmap just now - try again. ({e})")
     return {"listing": listing.title, "explanation": explanation}
- 
