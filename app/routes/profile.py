@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
  
@@ -21,6 +21,20 @@ class SurveyIn(BaseModel):
     location_pref: str | None = None
     target_types: list[str]
     open_to_offers: bool = False
+ 
+    @field_validator("northstar")
+    @classmethod
+    def northstar_must_be_real(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("northstar cannot be empty - it's the single most important field, feeding every scoring factor, roadmap, and career suggestion in the app")
+        return v.strip()
+ 
+    @field_validator("target_types")
+    @classmethod
+    def target_types_must_have_one(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("target_types cannot be empty - a profile with no target types would never match any listing at all")
+        return v
  
  
 @router.post("")
@@ -131,7 +145,8 @@ def get_potential_score(user_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No current profile for this user")
  
     milestones = db.query(RoadmapMilestone).filter(RoadmapMilestone.user_id == user_id).all()
-    roadmap_progress = round((1 / len(milestones)) * 100) if milestones else 0
+    done_count = sum(1 for m in milestones if m.status == "done")
+    roadmap_progress = round((done_count / len(milestones)) * 100) if milestones else 0
  
     skill_tokens = re.findall(r"[a-z][a-z\-]{2,}", (profile.skills or "").lower())
     skill_strength = min(100, len(skill_tokens) * 8)
