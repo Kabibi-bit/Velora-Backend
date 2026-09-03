@@ -1,3 +1,4 @@
+
 import os
 import re
 from fastapi import APIRouter, HTTPException, Depends
@@ -74,7 +75,10 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
  
     profile_dict = _profile_to_dict(profile)
     skill_gaps = _compute_skill_gaps(db, profile_dict)
-    result = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
+    try:
+        result = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate a roadmap just now - try again. ({e})")
     milestones = result["milestones"]
     summary = result["summary"]
  
@@ -193,5 +197,4 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     listing_dict = {"title": listing.title, "org": listing.org, "type": listing.type, "tags": listing.tags or []}
  
     explanation = explain_listing_against_roadmap(client, listing_dict, roadmap_dicts, _profile_to_dict(profile))
-    return {"listing": listing.title, "explanation": explanation}
- 
+    return {"listing": listing.title, "explanation": explanation
