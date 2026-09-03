@@ -434,6 +434,36 @@ def run_scan_for_all_users():
                 print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
                 print(f"    Auto Outreach: {outreach_count} new outreach draft(s) queued for {user.email}")
         print("Daily scan complete.")
+ 
+        # Closes a real gap: neither this scheduled job nor the manual
+        # UI ever automatically sent an approved application once its
+        # undo window passed - only drafting and approval were ever
+        # automatic, directly contradicting this function's own claim
+        # of full autonomy ("fires even if nobody opens the app that
+        # day"). An application could sit "approved" forever if nobody
+        # came back to manually click send. Mirrors the exact logic
+        # already proven in the manual /applications/{id}/send route,
+        # applied in bulk here rather than requiring one explicit call
+        # per application. Isolated in its own try/except so a real
+        # failure here can never retroactively undo the scan above.
+        try:
+            from app.models.db_models import Application
+            now = datetime.utcnow()
+            due_to_send = (
+                db.query(Application)
+                .filter(Application.status == "approved", Application.sendable_at.isnot(None), Application.sendable_at <= now)
+                .all()
+            )
+            sent_count = 0
+            for app_record in due_to_send:
+                app_record.status = "sent"
+                app_record.sent_at = now
+                sent_count += 1
+            if sent_count > 0:
+                db.commit()
+                print(f"Auto-send: {sent_count} approved application(s) past their undo window, now genuinely sent.")
+        except Exception as e:
+            print(f"Auto-send failed (non-fatal): {e}")
     except Exception as e:
         print(f"Scan failed: {e}")
     finally:
