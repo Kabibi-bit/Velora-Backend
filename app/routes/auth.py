@@ -23,6 +23,18 @@ def signup(payload: SignupIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"role must be one of {VALID_ROLES}")
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if len(payload.password.encode("utf-8")) > 72:
+        # bcrypt silently truncates and only ever hashes the first 72
+        # bytes of a password - confirmed directly against the real
+        # bcrypt.hashpw call this uses, with no truncation protection
+        # of its own. Without this check, anything past 72 bytes is
+        # silently ignored for authentication: a long password offers
+        # no more real protection than its first 72 bytes, and two
+        # genuinely different passwords sharing that same prefix would
+        # be treated as interchangeable. Checked in bytes, not
+        # characters, since multi-byte UTF-8 characters make those
+        # genuinely different counts.
+        raise HTTPException(status_code=400, detail="Password is too long (max 72 bytes) - longer passwords are silently truncated and would offer no additional real protection")
  
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
@@ -69,4 +81,3 @@ def get_me(authorization: str = Header(None), db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="User no longer exists")
     return {"user_id": str(user.id), "email": user.email, "role": user.role}
- 
