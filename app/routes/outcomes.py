@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import Outcome
+from app.models.db_models import Outcome, Listing, SocialPost
  
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -17,16 +17,40 @@ class OutcomeIn(BaseModel):
     user_id: str
     listing_id: str
     status: str
+    reflection: str | None = None
  
  
 @router.post("")
 def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
+    """Logs a real outcome on an application - the other major
+    'something real just happened' moment this app already tracks,
+    alongside milestone completion. When a real reflection is
+    provided in the same request, also creates a genuine, linked
+    Waypoint entry - grounded in the actual listing and outcome, not
+    a generic journal prompt. Entirely optional and backward
+    compatible - a bare outcome log with no reflection behaves
+    exactly as it always has.
+    """
     if payload.status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_STATUSES}")
     outcome = Outcome(user_id=payload.user_id, listing_id=payload.listing_id, status=payload.status)
     db.add(outcome)
+ 
+    journal_entry_id = None
+    if payload.reflection and payload.reflection.strip():
+        listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
+        listing_label = f"{listing.title} at {listing.org}" if listing else "a listing"
+        outcome_label = {"interview": "Got an interview", "offer": "Got an offer", "rejected": "Rejected", "ghosted": "Ghosted", "applied": "Applied"}.get(payload.status, payload.status)
+        post = SocialPost(
+            user_id=payload.user_id, body=payload.reflection.strip(),
+            tag_value=payload.status, tag_label=f"{outcome_label}: {listing_label}",
+        )
+        db.add(post)
+        db.flush()  # so post.id is populated before commit, to return it below
+        journal_entry_id = str(post.id)
+ 
     db.commit()
-    return {"status": "logged", "outcome_status": payload.status}
+    return {"status": "logged", "outcome_status": payload.status, "journal_entry_id": journal_entry_id}
  
  
 @router.get("/{user_id}")
@@ -189,3 +213,13 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
         .filter(Application.user_id == user_id, Application.factors_snapshot.isnot(None))
         .all()
     )
+    app_input = [
+        {"factors_snapshot": a.factors_snapshot, "outcome_status": outcome_by_listing_status[str(a.listing_id)]}
+        for a in applications
+        if str(a.listing_id) in outcome_by_listing_status
+    ]
+    from app.services.matching import get_interaction_readiness
+    findings = compute_factor_interactions(app_input)
+    readiness = get_interaction_readiness(app_input)
+    return {"findings": findings, "sample_size": len(app_input), "readiness": readiness}
+ 
