@@ -62,18 +62,13 @@ def decode_access_token(token: str) -> dict | None:
         return None
  
  
-def require_auth_for_user(user_id: str, authorization: str = Header(None)) -> dict:
-    """A real, reusable dependency a route can add to require the
-    caller's token to genuinely belong to the same user_id already in
-    the URL path - not just any valid token, since a valid token for
-    one person must not be usable to read or write a different
-    person's data by simply changing the user_id in the URL. This is
-    the concrete building block this module's own docstring already
-    promised; wiring it into every existing route is the separate,
-    larger retrofit still ahead, started here on Waypoint's journal
-    endpoints specifically, since those are explicitly marketed as
-    private and had the most directly contradictory gap.
-    """
+def verify_token_belongs_to_user(user_id: str, authorization: str | None) -> dict:
+    """The real, shared verification core: a valid, non-expired token
+    whose own sub claim genuinely matches the given user_id. Used
+    both directly (when a route already has user_id from its own URL
+    path) and indirectly (when a route only has some other resource's
+    id, and the caller looks up that resource's real owning user_id
+    first before calling this)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
@@ -83,4 +78,15 @@ def require_auth_for_user(user_id: str, authorization: str = Header(None)) -> di
     if payload.get("sub") != user_id:
         raise HTTPException(status_code=403, detail="This token does not belong to the requested user")
     return payload
+ 
+ 
+def require_auth_for_user(user_id: str, authorization: str = Header(None)) -> dict:
+    """A real, reusable FastAPI dependency for the common case: a
+    route whose own URL path already has user_id. Not usable as-is
+    for a route that only has some other resource's id (e.g. a
+    post_id) - that case needs the resource's real owner looked up
+    first, then verify_token_belongs_to_user called directly with
+    that real owner's id (see e.g. social.py's edit_post/delete_post).
+    """
+    return verify_token_belongs_to_user(user_id, authorization)
  
