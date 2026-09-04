@@ -1,4 +1,3 @@
-
 """SQLAlchemy models mirroring db/schema.sql.
 Run schema.sql directly against Postgres for the pgvector setup;
 these models are for querying/inserting from the app layer.
@@ -22,7 +21,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=True)  # nullable for backward-compat with any users created before auth existed
-    role = Column(String, nullable=False, default="candidate")  # candidate / tutor / athlete
+    role = Column(String, nullable=False, default="candidate")  # candidate / tutor
     created_at = Column(DateTime, default=datetime.utcnow)
  
     profiles = relationship("Profile", back_populates="user")
@@ -41,6 +40,11 @@ class Profile(Base):
     dealbreakers = Column(Text)
     location_pref = Column(String)
     target_types = Column(ARRAY(String))
+    is_athlete = Column(Boolean, nullable=False, default=False)
+    sport = Column(String)
+    level = Column(String)
+    career_direction = Column(String)
+    achievements = Column(Text)
     is_current = Column(Boolean, default=True)
     auto_apply_enabled = Column(Boolean, nullable=False, default=False)
     auto_apply_threshold = Column(Integer, nullable=False, default=80)
