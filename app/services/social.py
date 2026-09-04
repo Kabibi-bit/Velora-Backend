@@ -1,3 +1,4 @@
+
 """Waypoint: a private progress journal, not a social feed.
  
 Generalized to work across all 4 roles, not just candidates. This
@@ -18,11 +19,10 @@ What's left, and what this file does:
    person; a pattern across entries can surface something they
    wouldn't have noticed themselves.
  
-Both take a generic `focus` (the person's stated goal, whatever they
-are hiring for, what they teach - whatever is real for their role)
-and `context_summary` (a roadmap summary for candidate/athlete,
-expertise for tutor) rather than candidate-specific fields, since
-this is not candidate-only anymore.
+Both take a generic `focus` (the person's stated goal) and
+`context_summary` (a roadmap summary) - kept generic from when this
+briefly supported other roles, though candidate is genuinely the
+only one left now.
 """
  
  
