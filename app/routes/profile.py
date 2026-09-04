@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
@@ -52,6 +53,49 @@ class SurveyIn(BaseModel):
         return v.strip() if v else v
  
  
+ATHLETIC_HIGH_CONFIDENCE_WORDS = {
+    "soccer", "basketball", "football", "baseball", "softball", "volleyball",
+    "tennis", "golf", "swimming", "diving", "wrestling", "gymnastics",
+    "hockey", "lacrosse", "rowing", "rugby", "cycling", "fencing",
+    "archery", "boxing", "judo", "taekwondo", "karate", "skiing",
+    "snowboarding", "cheerleading", "badminton", "squash", "cricket",
+    "climbing", "triathlon", "powerlifting", "weightlifting", "bowling",
+    "athlete", "athletics", "varsity", "ncaa", "olympian", "olympics",
+}
+ATHLETIC_HIGH_CONFIDENCE_PHRASES = [
+    "student athlete", "student-athlete", "track and field", "track & field",
+    "cross country", "field hockey", "water polo", "table tennis",
+    "martial arts", "figure skating", "ultimate frisbee",
+    "division i", "division ii", "division iii", "division 1", "division 2", "division 3",
+    "go pro", "play professionally", "play in college", "play at the college level",
+]
+ATHLETIC_WEAK_SIGNAL_WORDS = {
+    "scholarship", "captain", "recruiting", "recruit", "combine", "tryout",
+    "tryouts", "coach", "coaching", "training", "roster", "draft", "league",
+}
+ 
+ 
+def detect_athletic_traits(text: str) -> dict:
+    """Mirrors the frontend's detectAthleticTraits exactly - same
+    tiered signal sets, same word-boundary tokenization. Any single
+    high-confidence word/phrase is enough alone; two or more weak,
+    ambiguous signals together also count, since one ambiguous word
+    ("scholarship") is too easily a false positive on its own, but
+    paired with something else ("scholarship" + "coach") genuinely
+    isn't a coincidence.
+    """
+    lower = (text or "").lower()
+    tokens = re.findall(r"[a-z][a-z\-]{2,}", lower)
+    token_set = set(tokens)
+ 
+    matched_high = [w for w in ATHLETIC_HIGH_CONFIDENCE_WORDS if w in token_set]
+    matched_high += [p for p in ATHLETIC_HIGH_CONFIDENCE_PHRASES if p in lower]
+    matched_weak = [w for w in ATHLETIC_WEAK_SIGNAL_WORDS if w in token_set]
+ 
+    detected = len(matched_high) > 0 or len(matched_weak) >= 2
+    return {"detected": detected, "matched_high": matched_high, "matched_weak": matched_weak}
+ 
+ 
 @router.post("")
 def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
     """Creates a new profile snapshot and marks it current.
@@ -83,7 +127,20 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
     db.add(new_profile)
     db.commit()
     db.refresh(new_profile)
-    return {"status": "created", "profile_id": str(new_profile.id)}
+ 
+    response = {"status": "created", "profile_id": str(new_profile.id)}
+    # A real, honest safeguard - not a silent override. Forcing
+    # is_athlete=true here would leave sport/level genuinely null
+    # (the frontend never collects them if the toggle was off), and
+    # could be wrong anyway - mentioning "sports marketing" isn't the
+    # same as being an athlete. Surfacing the discrepancy respects the
+    # person's own stated choice while still catching a real gap a
+    # direct API call could otherwise sneak past entirely.
+    if not payload.is_athlete:
+        detection = detect_athletic_traits(f"{payload.northstar} {payload.final_idea or ''}")
+        if detection["detected"]:
+            response["athletic_signals_detected"] = detection["matched_high"] + detection["matched_weak"]
+    return response
  
  
 @router.get("/{user_id}")
