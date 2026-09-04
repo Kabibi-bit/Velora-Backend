@@ -20,9 +20,9 @@ What's left, and what this file does:
  
 Both take a generic `focus` (the person's stated goal, whatever they
 are hiring for, what they teach - whatever is real for their role)
-and `context_summary` (a roadmap summary for candidate/athlete, a
-hiring need for business, expertise for tutor) rather than
-candidate-specific fields, since this is not candidate-only anymore.
+and `context_summary` (a roadmap summary for candidate/athlete,
+expertise for tutor) rather than candidate-specific fields, since
+this is not candidate-only anymore.
 """
  
  
