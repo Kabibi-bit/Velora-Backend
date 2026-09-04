@@ -7,7 +7,7 @@ from app.models.db_models import User
  
 router = APIRouter(prefix="/users", tags=["users"])
  
-VALID_ROLES = {"candidate", "business", "tutor"}
+VALID_ROLES = {"candidate", "tutor"}
  
  
 class UserIn(BaseModel):
@@ -45,7 +45,7 @@ class RoleIn(BaseModel):
  
 @router.post("/{user_id}/role")
 def set_role(user_id: str, payload: RoleIn, db: Session = Depends(get_db)):
-    """Lets someone switch which experience they use (candidate/business/tutor) -
+    """Lets someone switch which experience they use (candidate/tutor) -
     mirrors the frontend's role picker on the marketing homepage.
     """
     if payload.role not in VALID_ROLES:
