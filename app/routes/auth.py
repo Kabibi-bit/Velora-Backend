@@ -8,7 +8,7 @@ from app.services.auth import hash_password, verify_password, create_access_toke
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
-VALID_ROLES = {"candidate", "tutor"}
+VALID_ROLES = {"candidate"}
  
  
 class SignupIn(BaseModel):
