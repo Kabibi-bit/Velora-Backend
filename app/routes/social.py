@@ -26,11 +26,10 @@ class PostIn(BaseModel):
 @router.post("/posts")
 def create_post(payload: PostIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Adds an entry to the user's own private progress journal.
-    Works the same way for all 3 roles - tag_value/tag_label are
-    generic (a roadmap stage for candidate/athlete, a teaching phase
-    for tutor). video_url is a link to wherever the person already
-    hosts their video (YouTube, Loom, etc.) - no upload/hosting is
-    done here.
+    tag_value/tag_label hold a real roadmap stage - the one real
+    tagging style left now that candidate is the only role. video_url
+    is a link to wherever the person already hosts their video
+    (YouTube, Loom, etc.) - no upload/hosting is done here.
     """
     verify_token_belongs_to_user(payload.user_id, authorization)
     if not payload.body or not payload.body.strip():
@@ -112,9 +111,9 @@ class ReflectIn(BaseModel):
 def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """An honest, specific AI reflection on ONE journal entry. Takes
     focus/context_summary directly in the request rather than looking
-    up a stored profile, since only candidates have a Profile table -
-    athlete/tutor context has stayed frontend-only so far, the same
-    honest gap as the rest of those roles' features.
+    up a stored profile - kept this way from when other roles existed,
+    though candidate (the only role now) does have a Profile table
+    this could look up from instead.
     """
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
