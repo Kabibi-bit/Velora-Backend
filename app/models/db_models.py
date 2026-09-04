@@ -1,3 +1,4 @@
+
 """SQLAlchemy models mirroring db/schema.sql.
 Run schema.sql directly against Postgres for the pgvector setup;
 these models are for querying/inserting from the app layer.
@@ -21,7 +22,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=True)  # nullable for backward-compat with any users created before auth existed
-    role = Column(String, nullable=False, default="candidate")  # candidate / business / tutor / athlete
+    role = Column(String, nullable=False, default="candidate")  # candidate / tutor / athlete
     created_at = Column(DateTime, default=datetime.utcnow)
  
     profiles = relationship("Profile", back_populates="user")
@@ -41,7 +42,6 @@ class Profile(Base):
     location_pref = Column(String)
     target_types = Column(ARRAY(String))
     is_current = Column(Boolean, default=True)
-    open_to_offers = Column(Boolean, nullable=False, default=False)
     auto_apply_enabled = Column(Boolean, nullable=False, default=False)
     auto_apply_threshold = Column(Integer, nullable=False, default=80)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -164,34 +164,6 @@ class TutorRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
-class Business(Base):
-    __tablename__ = "businesses"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_name = Column(String, nullable=False)
-    contact_email = Column(String, unique=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
- 
- 
-class CandidateAccessPurchase(Base):
-    __tablename__ = "candidate_access_purchases"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"))
-    access_tier = Column(String, nullable=False)
-    price_paid = Column(Numeric(10, 2))
-    payment_status = Column(String, nullable=False, default="pending")
-    starts_at = Column(DateTime, default=datetime.utcnow)
-    expires_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
- 
- 
-class BusinessHire(Base):
-    __tablename__ = "business_hires"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"))
-    status = Column(String, nullable=False)  # contacted / interviewing / hired / passed
-    created_at = Column(DateTime, default=datetime.utcnow)
- 
- 
 class SavedListing(Base):
     __tablename__ = "saved_listings"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -237,14 +209,12 @@ class OutreachEmail(Base):
  
 class SocialPost(Base):
     """A private progress journal entry - generalized to work across
-    all 4 roles, not just candidates. tag_value/tag_label are generic
+    all 3 roles, not just candidates. tag_value/tag_label are generic
     on purpose: for candidates and athletes they hold a real roadmap
-    stage number and title; for business they hold a hiring-pipeline
-    phase (sourcing/outreach/interviewing/closing/onboarding); for
-    tutors they hold a teaching phase (prep/session/followup/
-    curriculum). Never a fake roadmap forced onto a role that doesn't
-    have one - each role's frontend supplies whatever tagging is
-    actually real for it.
+    stage number and title; for tutors they hold a teaching phase
+    (prep/session/followup/curriculum). Never a fake roadmap forced
+    onto a role that doesn't have one - each role's frontend supplies
+    whatever tagging is actually real for it.
     """
     __tablename__ = "social_posts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
