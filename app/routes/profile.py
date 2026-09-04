@@ -20,6 +20,11 @@ class SurveyIn(BaseModel):
     dealbreakers: str | None = None
     location_pref: str | None = None
     target_types: list[str]
+    is_athlete: bool = False
+    sport: str | None = None
+    level: str | None = None
+    career_direction: str | None = None
+    achievements: str | None = None
  
     @field_validator("northstar")
     @classmethod
@@ -34,6 +39,17 @@ class SurveyIn(BaseModel):
         if not v:
             raise ValueError("target_types cannot be empty - a profile with no target types would never match any listing at all")
         return v
+ 
+    @field_validator("sport")
+    @classmethod
+    def sport_required_if_athlete(cls, v: str | None, info) -> str | None:
+        # Mirrors the frontend's own hard block: if is_athlete is set,
+        # sport must genuinely be real, not empty - the same check
+        # survey.html itself does before it ever lets isAthlete
+        # through with an empty sport field.
+        if info.data.get("is_athlete") and (not v or not v.strip()):
+            raise ValueError("sport cannot be empty when is_athlete is true")
+        return v.strip() if v else v
  
  
 @router.post("")
@@ -57,6 +73,11 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
         dealbreakers=payload.dealbreakers,
         location_pref=payload.location_pref,
         target_types=payload.target_types,
+        is_athlete=payload.is_athlete,
+        sport=payload.sport,
+        level=payload.level,
+        career_direction=payload.career_direction,
+        achievements=payload.achievements,
         is_current=True,
     )
     db.add(new_profile)
@@ -85,6 +106,11 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db)):
         "dealbreakers": profile.dealbreakers,
         "location_pref": profile.location_pref,
         "target_types": profile.target_types,
+        "is_athlete": profile.is_athlete,
+        "sport": profile.sport,
+        "level": profile.level,
+        "career_direction": profile.career_direction,
+        "achievements": profile.achievements,
     }
  
  
