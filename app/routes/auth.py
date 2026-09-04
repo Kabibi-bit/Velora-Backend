@@ -8,7 +8,7 @@ from app.services.auth import hash_password, verify_password, create_access_toke
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
-VALID_ROLES = {"candidate", "business", "tutor", "athlete"}
+VALID_ROLES = {"candidate", "tutor", "athlete"}
  
  
 class SignupIn(BaseModel):
@@ -81,3 +81,4 @@ def get_me(authorization: str = Header(None), db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="User no longer exists")
     return {"user_id": str(user.id), "email": user.email, "role": user.role}
+ 
