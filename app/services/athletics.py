@@ -56,7 +56,14 @@ def generate_recruiting_content_plan(anthropic_client, sport: str, level: str, c
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    plan = json.loads(text)
+    # Real shape validation - a syntactically valid but incomplete
+    # response would otherwise pass through silently, mirrors the
+    # exact fix just applied to the frontend's equivalent function.
+    required_keys = ("reel_structure", "commonly_evaluated", "drills_to_practice", "content_checklist")
+    if not all(isinstance(plan.get(k), list) for k in required_keys):
+        raise ValueError(f"content plan response is missing one or more required list fields: {required_keys}")
+    return plan
  
  
 def research_target_program(anthropic_client, sport: str, level: str, program_name: str) -> dict:
