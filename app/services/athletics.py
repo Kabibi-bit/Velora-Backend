@@ -253,5 +253,20 @@ def generate_athlete_roadmap(anthropic_client, sport: str, level: str, career_di
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    roadmap = json.loads(text)
+    # Real, thorough shape validation - the calling route does
+    # unprotected dict-key access (m["stage"], m["title"]) on this
+    # result immediately after deleting the person's existing
+    # roadmap data, so an incomplete response here would surface as
+    # a raw, unhandled error mid-way through that destructive
+    # operation. Checks both the top-level shape and every required
+    # key within each individual milestone.
+    if not isinstance(roadmap.get("summary"), str) or not isinstance(roadmap.get("milestones"), list) or not roadmap["milestones"]:
+        raise ValueError("athlete roadmap response has an unexpected top-level shape")
+    required_milestone_keys = ("title", "description", "success_criteria", "estimated_timeframe",
+                                "first_action", "resource", "risk", "if_it_works", "if_it_stalls", "stage")
+    for m in roadmap["milestones"]:
+        if not all(k in m for k in required_milestone_keys):
+            raise ValueError(f"an athlete roadmap milestone is missing one or more required keys: {required_milestone_keys}")
+    return roadmap
  
