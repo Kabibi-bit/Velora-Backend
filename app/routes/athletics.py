@@ -34,6 +34,10 @@ def content_coach(payload: ContentPlanIn):
     data has stayed frontend-only so far, an honest gap rather than
     something silently assumed to exist.
     """
+    if not payload.sport.strip():
+        raise HTTPException(status_code=400, detail="sport is required")
+    if not payload.level.strip():
+        raise HTTPException(status_code=400, detail="level is required")
     if payload.career_direction not in VALID_DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"career_direction must be one of {VALID_DIRECTIONS}")
     try:
@@ -58,6 +62,10 @@ def research_program(payload: ProgramResearchIn):
     about a specific named program, rather than general knowledge.
     Reports plainly when search doesn't turn up anything specific.
     """
+    if not payload.sport.strip():
+        raise HTTPException(status_code=400, detail="sport is required")
+    if not payload.level.strip():
+        raise HTTPException(status_code=400, detail="level is required")
     if not payload.program_name.strip():
         raise HTTPException(status_code=400, detail="program_name is required")
     try:
@@ -88,6 +96,8 @@ def create_event(payload: EventIn, db: Session = Depends(get_db)):
     combine, or application deadline - optionally tied to a specific
     roadmap stage.
     """
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="title is required")
     if payload.event_type not in VALID_EVENT_TYPES:
         raise HTTPException(status_code=400, detail=f"event_type must be one of {VALID_EVENT_TYPES}")
     event = AthleteEvent(
@@ -104,6 +114,18 @@ def create_event(payload: EventIn, db: Session = Depends(get_db)):
  
 @router.get("/events/{user_id}")
 def list_events(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        # A malformed user_id would otherwise reach the DB query
+        # below and raise a raw, unhandled database exception -
+        # mirrors the identical, verified risk in resume.py. An
+        # explicit 400 here rather than silently returning an empty
+        # list, since a malformed ID is a genuine client error worth
+        # surfacing, not something that should look identical to
+        # "no events exist yet."
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     rows = (
         db.query(AthleteEvent)
         .filter(AthleteEvent.user_id == user_id)
@@ -127,8 +149,16 @@ class EventStatusIn(BaseModel):
  
 @router.post("/events/{event_id}/status")
 def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Depends(get_db)):
+    import uuid as uuid_module
     if payload.status not in VALID_EVENT_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_EVENT_STATUSES}")
+    try:
+        uuid_module.UUID(event_id)
+    except ValueError:
+        # Mirrors resume.py's established pattern - a malformed
+        # event_id would otherwise raise a raw, unhandled database
+        # exception at the query below.
+        raise HTTPException(status_code=404, detail="Event not found")
     event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -139,6 +169,11 @@ def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Dep
  
 @router.delete("/events/{event_id}")
 def delete_event(event_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Event not found")
     event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -167,6 +202,24 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
     app. Never invents a specific named person - only describes the
     TYPE of contact and gives a real, usable script.
     """
+    if not payload.sport.strip():
+        raise HTTPException(status_code=400, detail="sport is required")
+    if not payload.level.strip():
+        raise HTTPException(status_code=400, detail="level is required")
+    if not payload.target_description.strip():
+        raise HTTPException(status_code=400, detail="target_description is required")
+    if not payload.org_name.strip():
+        raise HTTPException(status_code=400, detail="org_name is required")
+ 
+    # Checked before the AI draft call, not after - this is a cheap,
+    # fast, local check that can fail independently of the draft.
+    # Running it first means a failed guess never discards an
+    # already-completed, real AI generation that cost real time to
+    # produce.
+    guess = guess_contact_emails(payload.org_name)
+    if not guess.get("candidates"):
+        raise HTTPException(status_code=400, detail="Could not guess a contact address for this program")
+ 
     try:
         drafted = draft_coach_outreach(
             client, payload.sport, payload.level, payload.career_direction,
@@ -174,10 +227,6 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate outreach just now: {e}")
- 
-    guess = guess_contact_emails(payload.org_name)
-    if not guess.get("candidates"):
-        raise HTTPException(status_code=400, detail="Could not guess a contact address for this program")
  
     outreach = AthleteOutreach(
         user_id=payload.user_id,
@@ -207,6 +256,11 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
  
 @router.get("/outreach/{user_id}")
 def list_outreach(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     rows = db.query(AthleteOutreach).filter(AthleteOutreach.user_id == user_id).order_by(AthleteOutreach.created_at.desc()).all()
     return [
         {
@@ -227,6 +281,11 @@ class EditOutreachIn(BaseModel):
  
 @router.patch("/outreach/{outreach_id}")
 def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(outreach_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
     outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
@@ -245,6 +304,11 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
  
 @router.post("/outreach/{outreach_id}/send")
 def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(outreach_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
     outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
@@ -275,6 +339,10 @@ def edit_plan(payload: ClipEditPlanIn):
     grounded in the athlete's own description of their footage, for
     them to execute in whatever editor they already use.
     """
+    if not payload.sport.strip():
+        raise HTTPException(status_code=400, detail="sport is required")
+    if not payload.level.strip():
+        raise HTTPException(status_code=400, detail="level is required")
     if not payload.clips_description.strip():
         raise HTTPException(status_code=400, detail="clips_description is required")
     try:
@@ -300,6 +368,10 @@ def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_
     replaces any previous one on regeneration, same behavior as the
     candidate roadmap endpoint.
     """
+    if not payload.sport.strip():
+        raise HTTPException(status_code=400, detail="sport is required")
+    if not payload.level.strip():
+        raise HTTPException(status_code=400, detail="level is required")
     if payload.career_direction not in VALID_DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"career_direction must be one of {VALID_DIRECTIONS}")
     try:
@@ -349,6 +421,11 @@ def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_
  
 @router.get("/roadmap/{user_id}")
 def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No roadmap generated yet for this user")
     summary_row = db.query(AthleteRoadmapSummary).filter(AthleteRoadmapSummary.user_id == user_id).first()
     if not summary_row:
         raise HTTPException(status_code=404, detail="No roadmap generated yet for this user")
@@ -379,8 +456,13 @@ class MilestoneStatusIn(BaseModel):
  
 @router.post("/roadmap/milestone/{milestone_id}/status")
 def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+    import uuid as uuid_module
     if payload.status not in {"planned", "in_progress", "done"}:
         raise HTTPException(status_code=400, detail="status must be planned, in_progress, or done")
+    try:
+        uuid_module.UUID(milestone_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Milestone not found")
     milestone = db.query(AthleteRoadmapMilestone).filter(AthleteRoadmapMilestone.id == milestone_id).first()
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
