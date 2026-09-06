@@ -150,7 +150,11 @@ def draft_coach_outreach(anthropic_client, sport: str, level: str, career_direct
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    result = json.loads(text)
+    required_keys = ("who_to_contact", "how_to_find", "email_subject", "email_body", "cold_call_script")
+    if not all(isinstance(result.get(k), str) for k in required_keys):
+        raise ValueError(f"coach outreach response is missing one or more required string fields: {required_keys}")
+    return result
  
  
 def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_direction: str, clips_description: str) -> dict:
@@ -192,7 +196,10 @@ def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_dir
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    plan = json.loads(text)
+    if not isinstance(plan.get("edit_sequence"), list) or not isinstance(plan.get("captions"), list) or not isinstance(plan.get("honest_assessment"), str):
+        raise ValueError("clip edit plan response has an unexpected shape")
+    return plan
  
  
 def generate_athlete_roadmap(anthropic_client, sport: str, level: str, career_direction: str, achievements: str) -> dict:
