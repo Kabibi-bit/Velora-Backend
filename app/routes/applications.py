@@ -31,6 +31,15 @@ def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
     tailored application via Claude, and decides whether it's
     confident enough to queue for auto-send or needs human review.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
     result = create_application_for_match(db, client, payload.user_id, payload.listing_id)
  
     if result.get("error") == "no_profile":
@@ -60,6 +69,16 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
     Kept for manual/testing use - /accept is the real one-click path.
     """
     from app.models.db_models import Profile, Listing, ResumeEntry
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     profile = (
         db.query(Profile)
@@ -78,6 +97,12 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
     resume_entry_rows = db.query(ResumeEntry).filter(ResumeEntry.user_id == payload.user_id).all()
     resume_entry_dicts = [{"title": e.title, "org": e.org, "raw_description": e.raw_description} for e in resume_entry_rows]
     draft_result = draft_application(client, listing_dict, profile_dict, resume_entry_dicts)
+    # A genuine API failure returns {"error": ...} with no "text" key -
+    # confirmed this was previously accessed directly without checking,
+    # unlike create_application_for_match, which correctly guards
+    # against the identical shape from the same function.
+    if "error" in draft_result:
+        raise HTTPException(status_code=502, detail=f"Could not generate a draft just now - try again. ({draft_result['error']})")
     draft_text = draft_result["text"]
     status = decide_auto_send(payload.confidence_pct)
  
@@ -114,6 +139,12 @@ def list_applications(user_id: str, db: Session = Depends(get_db)):
     the frontend's Workshop page.
     """
     from app.models.db_models import Listing
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
  
     rows = (
         db.query(Application, Listing)
@@ -143,6 +174,11 @@ def list_applications(user_id: str, db: Session = Depends(get_db)):
 @router.post("/{application_id}/approve")
 def approve_application(application_id: str, db: Session = Depends(get_db)):
     """For applications sitting in pending_review - the human approval step."""
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -158,6 +194,11 @@ def send_application(application_id: str, db: Session = Depends(get_db)):
     window has passed. NOTE: this does not submit anything to a real
     job site -- see the honest limitation noted in auto_apply.py.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -175,6 +216,11 @@ def send_application(application_id: str, db: Session = Depends(get_db)):
  
 @router.post("/{application_id}/undo")
 def undo_application(application_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -197,6 +243,12 @@ def explain_outcome(application_id: str, db: Session = Depends(get_db)):
     import anthropic
     from app.models.db_models import Listing, Profile, Outcome
     from app.services.calibration import explain_outcome_deep
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
  
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
