@@ -21,6 +21,8 @@ class CompanyResearchIn(BaseModel):
 def research_company_route(payload: CompanyResearchIn):
     if not payload.company_name.strip():
         raise HTTPException(status_code=400, detail="company_name is required")
+    if not payload.role_title.strip():
+        raise HTTPException(status_code=400, detail="role_title is required")
     try:
         result = research_company(client, payload.company_name, payload.role_title)
     except Exception as e:
@@ -37,6 +39,17 @@ class InterviewPrepIn(BaseModel):
  
 @router.post("/interview-prep")
 def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        # A malformed user_id would otherwise reach the DB query
+        # below and raise a raw, unhandled database exception -
+        # mirrors the identical, established fix already applied to
+        # every path-parameter ID in athletics.py this session. The
+        # risk is the same whether the ID comes from a path or, as
+        # here, a request-body field.
+        raise HTTPException(status_code=404, detail="No current profile for this user")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
