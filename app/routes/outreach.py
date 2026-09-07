@@ -23,6 +23,15 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
     """The 'Find a contact' action - drafts a referral email straight
     into Workshop instead of showing it inline. Never sends anything.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
     result = draft_outreach_for_match(db, client, payload.user_id, payload.listing_id, auto_generated=False)
     if result.get("error") == "no_profile":
         raise HTTPException(status_code=404, detail="No current profile for this user")
@@ -56,6 +65,16 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
     from app.services.market_research import get_or_research_company_leadership
     from app.services.auto_apply import draft_leadership_grounded_outreach
     from app.models.db_models import Listing
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     listing = db.query(Listing).filter(Listing.id == payload.listing_id).first()
     if not listing:
@@ -92,6 +111,12 @@ def get_leadership_research(listing_id: str, db: Session = Depends(get_db)):
     """
     from app.services.market_research import get_or_research_company_leadership
     from app.models.db_models import Listing
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
@@ -109,6 +134,11 @@ def list_outreach(user_id: str, db: Session = Depends(get_db)):
     both auto-generated (while Auto mode was running) and manually
     requested via 'Find a contact'.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     rows = (
         db.query(OutreachEmail, Listing)
         .join(Listing, OutreachEmail.listing_id == Listing.id)
@@ -145,6 +175,11 @@ class EditOutreachIn(BaseModel):
 @router.patch("/{outreach_id}")
 def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
     """Lets the user edit a drafted email in Workshop before sending."""
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(outreach_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
     outreach = db.query(OutreachEmail).filter(OutreachEmail.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
@@ -167,6 +202,11 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
     which the frontend only does from a user clicking Send in
     Workshop. Never called automatically by any scan or Auto cycle.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(outreach_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Outreach draft not found")
     outreach = db.query(OutreachEmail).filter(OutreachEmail.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
@@ -190,6 +230,11 @@ def send_all_pending(user_id: str, db: Session = Depends(get_db)):
     a single, explicit, human-triggered click, just covering everything
     queued at once instead of one at a time.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     pending = db.query(OutreachEmail).filter(OutreachEmail.user_id == user_id, OutreachEmail.status == "drafted").all()
     results = []
     for outreach in pending:
