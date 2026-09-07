@@ -337,6 +337,8 @@ def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(ge
     from app.services.resume_builder import add_skill_to_skills_string, build_skills_section
     import uuid as uuid_module
  
+    if not body.skill or not body.skill.strip():
+        raise HTTPException(status_code=400, detail="skill cannot be empty")
     try:
         uuid_module.UUID(user_id)
     except ValueError:
@@ -367,6 +369,8 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
     from app.services.resume_builder import remove_skill_from_skills_string, build_skills_section
     import uuid as uuid_module
  
+    if not body.skill or not body.skill.strip():
+        raise HTTPException(status_code=400, detail="skill cannot be empty")
     try:
         uuid_module.UUID(user_id)
     except ValueError:
