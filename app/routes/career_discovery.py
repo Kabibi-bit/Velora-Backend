@@ -26,6 +26,12 @@ def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db))
     """Scores the assessment against real stored listings (not just
     static descriptions), and saves the result so it persists.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
     answers = {"people": payload.people, "data": payload.data, "creative": payload.creative, "structure": payload.structure, "free_text": payload.free_text}
     listings = db.query(Listing).all()
     all_tags = [l.tags or [] for l in listings]
@@ -44,6 +50,11 @@ def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db))
  
 @router.get("/{user_id}")
 def get_discovery(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"answers": None, "directions": None, "note": "No discovery assessment taken yet."}
     result = db.query(CareerDiscoveryResult).filter(CareerDiscoveryResult.user_id == user_id).first()
     if not result:
         return {"answers": None, "directions": None, "note": "No discovery assessment taken yet."}
@@ -60,6 +71,11 @@ def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = D
     called when someone actually wants more than the instant score,
     same cost-conscious pattern as the deep match explanation.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No discovery assessment on file - submit one first")
     result = db.query(CareerDiscoveryResult).filter(CareerDiscoveryResult.user_id == user_id).first()
     if not result:
         raise HTTPException(status_code=404, detail="No discovery assessment on file - submit one first")
@@ -68,6 +84,9 @@ def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = D
     if not direction:
         raise HTTPException(status_code=404, detail="Unknown direction id")
  
-    explanation = explain_direction_deep(client, direction, result.answers)
+    try:
+        explanation = explain_direction_deep(client, direction, result.answers)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate this explanation just now: {e}")
     return {"direction_id": payload.direction_id, "explanation": explanation}
  
