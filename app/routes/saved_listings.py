@@ -27,6 +27,16 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db)):
     conflict, an AI call failure), the star itself still succeeds -
     drafting failures never block the save.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    try:
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
     existing = (
         db.query(SavedListing)
         .filter(SavedListing.user_id == payload.user_id, SavedListing.listing_id == payload.listing_id)
@@ -56,6 +66,12 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db)):
  
 @router.delete("/{user_id}/{listing_id}")
 def unsave_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Not currently saved")
     row = (
         db.query(SavedListing)
         .filter(SavedListing.user_id == user_id, SavedListing.listing_id == listing_id)
@@ -70,6 +86,11 @@ def unsave_listing(user_id: str, listing_id: str, db: Session = Depends(get_db))
  
 @router.get("/{user_id}")
 def get_saved(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     rows = (
         db.query(SavedListing, Listing)
         .join(Listing, SavedListing.listing_id == Listing.id)
@@ -80,3 +101,4 @@ def get_saved(user_id: str, db: Session = Depends(get_db)):
         {"listing_id": str(l.id), "title": l.title, "org": l.org, "type": l.type, "deadline": l.deadline.isoformat() if l.deadline else None}
         for _, l in rows
     ]
+ 
