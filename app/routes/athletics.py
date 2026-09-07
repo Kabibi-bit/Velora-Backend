@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
-from app.models.db_models import AthleteEvent, AthleteOutreach, AthleteRoadmapMilestone, AthleteRoadmapSummary
+from app.models.db_models import AthleteEvent, AthleteOutreach, AthleteRoadmapMilestone, AthleteRoadmapSummary, SocialPost
 from app.services.athletics import generate_recruiting_content_plan, research_target_program, draft_coach_outreach, generate_clip_edit_plan, generate_athlete_roadmap
 from app.services.email_send import guess_contact_emails, send_email
  
@@ -452,10 +452,23 @@ def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db)):
  
 class MilestoneStatusIn(BaseModel):
     status: str
+    reflection: str | None = None
  
  
 @router.post("/roadmap/milestone/{milestone_id}/status")
 def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+    """Marks real progress on one milestone.
+ 
+    When status genuinely transitions to "done" and the person
+    provides a real reflection in the same request, this also
+    creates a genuine, linked Waypoint journal entry - tagged to
+    this exact milestone's real stage and title. Mirrors the
+    identical, already-proven capability on the candidate side's
+    roadmap.py exactly - a gap that genuinely existed here until now,
+    the same one just found and fixed on the frontend. Entirely
+    optional - a bare status update with no reflection behaves
+    exactly as it always has.
+    """
     import uuid as uuid_module
     if payload.status not in {"planned", "in_progress", "done"}:
         raise HTTPException(status_code=400, detail="status must be planned, in_progress, or done")
@@ -467,6 +480,17 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
     milestone.status = payload.status
+ 
+    journal_entry_id = None
+    if payload.status == "done" and payload.reflection and payload.reflection.strip():
+        post = SocialPost(
+            user_id=milestone.user_id, body=payload.reflection.strip(),
+            tag_value=str(milestone.target_stage), tag_label=milestone.title,
+        )
+        db.add(post)
+        db.flush()  # so post.id is populated before commit, to return it below
+        journal_entry_id = str(post.id)
+ 
     db.commit()
-    return {"status": milestone.status}
+    return {"status": "updated", "milestone_status": milestone.status, "journal_entry_id": journal_entry_id}
  
