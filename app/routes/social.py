@@ -32,6 +32,11 @@ def create_post(payload: PostIn, db: Session = Depends(get_db), authorization: s
     (YouTube, Loom, etc.) - no upload/hosting is done here.
     """
     verify_token_belongs_to_user(payload.user_id, authorization)
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     if not payload.body or not payload.body.strip():
         raise HTTPException(status_code=400, detail="Entry body cannot be empty")
     post = SocialPost(
@@ -65,6 +70,11 @@ def list_journal(user_id: str, search: str | None = None, db: Session = Depends(
     frontend's own search exactly, done server-side instead of
     filtering a fetched batch client-side.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     query = db.query(SocialPost).filter(SocialPost.user_id == user_id)
     if search and search.strip():
         term = f"%{search.strip()}%"
@@ -79,6 +89,11 @@ class EditPostIn(BaseModel):
  
 @router.patch("/posts/{post_id}")
 def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(post_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
@@ -93,6 +108,11 @@ def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db), 
  
 @router.delete("/posts/{post_id}")
 def delete_post(post_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(post_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
@@ -115,6 +135,11 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
     though candidate (the only role now) does have a Profile table
     this could look up from instead.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(post_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
     post = db.query(SocialPost).filter(SocialPost.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
@@ -138,6 +163,11 @@ def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depen
     user's last several entries together for a real pattern, instead
     of restating one entry back at them.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     rows = (
         db.query(SocialPost)
         .filter(SocialPost.user_id == user_id)
