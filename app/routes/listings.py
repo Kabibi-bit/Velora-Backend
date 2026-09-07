@@ -56,6 +56,12 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
     is still surfaced per-listing via factors.roadmap_alignment, for
     explanation and UI display.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -144,8 +150,14 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     """
     import os
     import anthropic
+    import uuid as uuid_module
     from app.services.scheduler import run_scan_for_user, _pull_and_store_new_listings
     from app.services.auto_apply import create_application_for_match, draft_outreach_for_match
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
  
     new_count = await _pull_and_store_new_listings(db)
     result = run_scan_for_user(db, user_id)
@@ -197,6 +209,16 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     import os
     import anthropic
     from app.models.db_models import RoadmapMilestone
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
@@ -241,12 +263,15 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
         "filler like 'this could be a great opportunity' - every sentence should reference a specific "
         "fact about the candidate or the listing."
     )
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate this explanation just now: {e}")
     return {"listing_id": listing_id, "listing_title": listing.title, "explanation": explanation}
  
  
@@ -263,6 +288,16 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
     """
     import os
     import anthropic
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
@@ -295,19 +330,18 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
         "conversation or referral, not generic flattery\n\n"
         "Return ONLY valid JSON with exactly those three keys, nothing else, no markdown fences."
     )
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
- 
-    import json
     try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        import json
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="Could not generate a connection strategy just now - try again.")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate a connection strategy just now: {e}")
  
     return {
         "listing_id": listing_id,
@@ -328,6 +362,12 @@ def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get
     in place regardless of how the send flow is triggered.
     """
     from app.services.email_send import guess_contact_emails
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
@@ -353,6 +393,16 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     """
     from app.services.email_send import send_email
     from app.models.db_models import OutreachEmail
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
  
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
