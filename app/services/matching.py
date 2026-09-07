@@ -1,4 +1,3 @@
-
 """Matching engine: scores listings against a user's profile.
  
 Every factor that shows up in the explanation is a real input to the
@@ -315,7 +314,8 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     at all.
     """
     factor_weights = factor_weights or {}
-    if _has_dealbreaker(listing["tags"], profile.get("dealbreakers") or ""):
+    listing_tags = listing.get("tags") or []
+    if _has_dealbreaker(listing_tags, profile.get("dealbreakers") or ""):
         return None
  
     goal_tokens = tokenize(f"{profile['northstar']} {profile.get('final_idea', '')}")
@@ -326,7 +326,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     matched_goal, matched_skill = [], []
     matched_tag_terms = set()
     double_match_count = 0
-    for tag in listing["tags"]:
+    for tag in listing_tags:
         in_goal = any(_terms_match(t, tag) for t in goal_tokens)
         in_skill = any(_terms_match(t, tag) for t in skill_tokens)
         if in_goal:
@@ -349,7 +349,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     location_fit, location_reason = _location_fit_factor(listing, profile)
     deadline_urgency, days_left = _deadline_urgency_factor(listing)
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
-    semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"), tag_count=len(listing["tags"]))
+    semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"), tag_count=len(listing_tags))
     roadmap_alignment = compute_roadmap_alignment(listing, roadmap_milestones) if roadmap_milestones else None
     roadmap_fit = round(roadmap_alignment["strength"] * 3.0, 2) if roadmap_alignment else 0.0
  
@@ -435,7 +435,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # for headroom it could never have earned in the first place.
     location_headroom = 1.5 if listing.get("location") else 0.0
     deadline_headroom = 1.5 if listing.get("deadline") else 0.0
-    denom = len(listing["tags"]) * 3 + 1.5 + location_headroom + deadline_headroom + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
+    denom = len(listing_tags) * 3 + 1.5 + location_headroom + deadline_headroom + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
     pct = max(35, min(97, round((raw_total / denom) * 100)))
  
     # How many INDEPENDENT signals actually agree, not just the
