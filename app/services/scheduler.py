@@ -1,4 +1,3 @@
-
 """Background job that scans real listings daily and re-scores them
 for every user with an active profile. This is what makes the
 "continuous overnight watch" real instead of a UI animation.
@@ -407,57 +406,72 @@ def run_scan_for_all_users():
  
         users = db.query(User).join(Profile).filter(Profile.is_current == True).all()  # noqa: E712
         for user in users:
-            result = run_scan_for_user(db, str(user.id))
-            print(f"  {user.email}: {result}")
+            # Isolated per-user, mirroring the exact same defensive
+            # pattern already applied consistently everywhere else in
+            # this file (each Adzuna/Simplify/scholarship/athletic
+            # source above, the notification write, the auto-send
+            # pass below). Without this, an unexpected failure
+            # processing ONE user's scan (a malformed profile row, a
+            # database constraint issue - anything not already caught
+            # by create_application_for_match's own internal
+            # protection) would abort every remaining user in the
+            # batch for the entire day, contradicting this file's own
+            # consistent "one failure shouldn't cancel everything"
+            # design applied throughout every other part of it.
+            try:
+                result = run_scan_for_user(db, str(user.id))
+                print(f"  {user.email}: {result}")
  
-            profile = (
-                db.query(Profile)
-                .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
-                .first()
-            )
-            if profile and profile.auto_apply_enabled:
-                listings = db.query(Listing).all()
-                ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
-                auto_count = 0
-                outreach_count = 0
-                for listing in ranked:
-                    outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
-                    if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
-                        auto_count += 1
+                profile = (
+                    db.query(Profile)
+                    .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
+                    .first()
+                )
+                if profile and profile.auto_apply_enabled:
+                    listings = db.query(Listing).all()
+                    ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
+                    auto_count = 0
+                    outreach_count = 0
+                    for listing in ranked:
+                        outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
+                        if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
+                            auto_count += 1
  
-                    # Auto mode drafts outreach for the same eligible
-                    # matches while the user is away - queued in
-                    # Workshop, status stays 'drafted' until the user
-                    # comes back and explicitly clicks send.
-                    outreach_result = draft_outreach_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
-                    if not outreach_result.get("error") and not outreach_result.get("already_existed"):
-                        outreach_count += 1
-                print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
-                print(f"    Auto Outreach: {outreach_count} new outreach draft(s) queued for {user.email}")
-                # Closes a real, confirmed gap: notifications.py's own
-                # docstring already claimed the scheduler "would call
-                # this directly," but it never actually did - meaning
-                # a person's Inbox page had nothing real to show for
-                # the one job that's supposed to work even when
-                # nobody's watching. Wrapped in its own try/except so
-                # a genuine notification-write failure can never
-                # retroactively undo the real scan work above it.
-                try:
-                    if auto_count > 0:
-                        db.add(Notification(
-                            user_id=user.id, type="auto_apply",
-                            title=f"Auto Apply: {auto_count} new application{'s' if auto_count != 1 else ''} auto-approved",
-                        ))
-                    if outreach_count > 0:
-                        db.add(Notification(
-                            user_id=user.id, type="auto_apply",
-                            title=f"Auto Apply: {outreach_count} outreach email{'s' if outreach_count != 1 else ''} drafted",
-                            detail="Review and send from the Workshop whenever you're ready.",
-                        ))
-                    if auto_count > 0 or outreach_count > 0:
-                        db.commit()
-                except Exception as e:
-                    print(f"    Notification write failed (non-fatal): {e}")
+                        # Auto mode drafts outreach for the same eligible
+                        # matches while the user is away - queued in
+                        # Workshop, status stays 'drafted' until the user
+                        # comes back and explicitly clicks send.
+                        outreach_result = draft_outreach_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
+                        if not outreach_result.get("error") and not outreach_result.get("already_existed"):
+                            outreach_count += 1
+                    print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
+                    print(f"    Auto Outreach: {outreach_count} new outreach draft(s) queued for {user.email}")
+                    # Closes a real, confirmed gap: notifications.py's own
+                    # docstring already claimed the scheduler "would call
+                    # this directly," but it never actually did - meaning
+                    # a person's Inbox page had nothing real to show for
+                    # the one job that's supposed to work even when
+                    # nobody's watching. Wrapped in its own try/except so
+                    # a genuine notification-write failure can never
+                    # retroactively undo the real scan work above it.
+                    try:
+                        if auto_count > 0:
+                            db.add(Notification(
+                                user_id=user.id, type="auto_apply",
+                                title=f"Auto Apply: {auto_count} new application{'s' if auto_count != 1 else ''} auto-approved",
+                            ))
+                        if outreach_count > 0:
+                            db.add(Notification(
+                                user_id=user.id, type="auto_apply",
+                                title=f"Auto Apply: {outreach_count} outreach email{'s' if outreach_count != 1 else ''} drafted",
+                                detail="Review and send from the Workshop whenever you're ready.",
+                            ))
+                        if auto_count > 0 or outreach_count > 0:
+                            db.commit()
+                    except Exception as e:
+                        print(f"    Notification write failed (non-fatal): {e}")
+            except Exception as e:
+                print(f"  Scan failed for {user.email}, continuing with remaining users: {e}")
         print("Daily scan complete.")
  
         # Closes a real gap: neither this scheduled job nor the manual
