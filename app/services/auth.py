@@ -78,6 +78,13 @@ def decode_access_token(token: str) -> dict | None:
         return None
     except jwt.InvalidTokenError:
         return None
+    except Exception:
+        # A genuine, final safety net - the two specific exception
+        # types above cover the real, documented pyjwt failure modes,
+        # but a security-critical token-decode path should never let
+        # an unexpected exception type propagate as a raw, unhandled
+        # error instead of an honest "invalid token" rejection.
+        return None
  
  
 def verify_token_belongs_to_user(user_id: str, authorization: str | None) -> dict:
