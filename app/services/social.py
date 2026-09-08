@@ -1,4 +1,3 @@
-
 """Waypoint: a private progress journal, not a social feed.
  
 Generalized to work across all 4 roles, not just candidates. This
@@ -31,7 +30,7 @@ def reflect_on_journal_entry(anthropic_client, focus: str, context_summary: str 
     prompt = (
         f"A person's goal or focus: \"{focus}\". Their current strategy or context: \"{context_summary or 'none stated yet'}\".\n"
         f"{tag_line}\n"
-        f"A journal entry they just wrote about their progress:\n\"{entry_body}\"\n\n"
+        f"A journal entry they just wrote about their progress:\n\"{entry_body or ''}\"\n\n"
         "In 2-3 sentences, give an honest, specific reflection - does this genuinely represent progress "
         "toward their stated goal, is there a real risk or blind spot worth naming, or a concrete next "
         "step implied by what they wrote? Reference their actual goal or tag by name. Avoid generic "
@@ -50,7 +49,7 @@ def reflect_on_entry_pattern(anthropic_client, focus: str, context_summary: str 
     across several entries together instead of one at a time.
     """
     entries_text = "\n".join(
-        f"{i+1}. {'[' + e['tag_label'] + '] ' if e.get('tag_label') else ''}{e['body']}"
+        f"{i+1}. {'[' + e['tag_label'] + '] ' if e.get('tag_label') else ''}{e.get('body') or ''}"
         for i, e in enumerate(entries)
     )
     prompt = (
