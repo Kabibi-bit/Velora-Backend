@@ -107,9 +107,23 @@ def normalize_adzuna(raw: dict) -> dict:
     name - AT&T, Procter & Gamble - would otherwise display as
     "AT&amp;T" verbatim to a real user).
     """
+    raw_id = raw.get("id")
+    if raw_id is not None:
+        external_id = str(raw_id)
+    else:
+        # A genuinely missing id would otherwise produce the literal
+        # string "None" for every affected listing, causing them all
+        # to collide and incorrectly dedupe against each other via
+        # dedupe_listings' (source, external_id) key. Mirrors the
+        # exact, established stable-hash fallback pattern already
+        # used in normalize_scholarship_from_search for this same
+        # problem - genuinely unlikely from Adzuna's real API, which
+        # should always provide an id, but defended regardless.
+        fallback_source = f"{raw.get('title', '')}|{raw.get('redirect_url', '')}"
+        external_id = "hash_" + hashlib.sha256(fallback_source.encode()).hexdigest()[:16]
     return {
         "source": "adzuna",
-        "external_id": str(raw.get("id")),
+        "external_id": external_id,
         "title": html.unescape(raw.get("title", "")).strip(),
         "org": html.unescape((raw.get("company") or {}).get("display_name", "Unknown")),
         "type": "job",  # Adzuna doesn't distinguish internships; refine via title keywords
@@ -175,7 +189,7 @@ def dedupe_listings(listings: list[dict]) -> list[dict]:
     seen = set()
     out = []
     for l in listings:
-        key = (l["source"], l["external_id"])
+        key = (l.get("source"), l.get("external_id"))
         if key not in seen:
             seen.add(key)
             out.append(l)
