@@ -23,7 +23,7 @@ def compute_calibration(applications: list[dict], outcomes: list[dict]) -> dict:
     outcome_by_listing = {}
     for o in outcomes:
         # Keep the most recent/most advanced outcome per listing if there are multiples
-        outcome_by_listing[o["listing_id"]] = o["status"]
+        outcome_by_listing[o.get("listing_id")] = o.get("status")
  
     buckets = {
         "80-100%": {"range": (80, 101), "total": 0, "positive": 0},
@@ -33,10 +33,11 @@ def compute_calibration(applications: list[dict], outcomes: list[dict]) -> dict:
     positive_statuses = {"interview", "offer"}
  
     for app in applications:
-        if app["listing_id"] not in outcome_by_listing:
+        app_listing_id = app.get("listing_id")
+        if app_listing_id not in outcome_by_listing:
             continue  # no real outcome logged yet for this one - excluded, not counted as a failure
-        confidence = float(app["confidence_pct"] or 0)
-        outcome = outcome_by_listing[app["listing_id"]]
+        confidence = float(app.get("confidence_pct") or 0)
+        outcome = outcome_by_listing[app_listing_id]
         for bucket in buckets.values():
             lo, hi = bucket["range"]
             if lo <= confidence < hi:
