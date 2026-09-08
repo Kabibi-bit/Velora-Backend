@@ -151,6 +151,13 @@ def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
         return 0.0, None
     try:
         deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
+        if not isinstance(deadline_date, date):
+            # A deadline that's neither a real date string nor an
+            # actual date object (e.g. a raw int) would otherwise
+            # reach the subtraction below unchanged and crash there,
+            # outside where this try/except could catch it - found by
+            # brutally testing a non-string, non-date deadline value.
+            return 0.0, None
     except (ValueError, TypeError):
         return 0.0, None
     days_left = (deadline_date - date.today()).days
@@ -173,7 +180,7 @@ def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | Non
     """
     listing_loc = (listing.get("location") or "").lower()
     location_pref = (profile.get("location_pref") or "").lower()
-    priorities = profile.get("priorities", [])
+    priorities = profile.get("priorities") or []
  
     if "flexibility" in priorities and "remote" in listing_loc:
         return 1.5, "remote, matching your stated need for flexibility"
@@ -320,7 +327,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
  
     goal_tokens = tokenize(f"{profile['northstar']} {profile.get('final_idea', '')}")
     skill_tokens = tokenize(profile.get("skills", ""))
-    priorities = profile.get("priorities", [])
+    priorities = profile.get("priorities") or []
  
     goal_fit, skill_fit = 0.0, 0.0
     matched_goal, matched_skill = [], []
@@ -498,7 +505,7 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         ra = factors["roadmap_alignment"]
         clauses.append(f"directly advances Stage {ra['stage']} of your roadmap (\"{ra['title']}\")")
  
-    priorities = profile.get("priorities", [])
+    priorities = profile.get("priorities") or []
     if "pay" in priorities and listing["type"] == "job":
         clauses.append("is a full-time role, aligned with pay being a top priority for you")
     if "learning" in priorities and listing["type"] in ("internship", "college"):
