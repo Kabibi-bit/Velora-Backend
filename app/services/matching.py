@@ -895,7 +895,7 @@ def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
         return None
     best_stage, best_matched, best_strength = None, [], 0.0
     for m in milestones:
-        milestone_tokens = set(tokenize(m["title"] + " " + m["description"]))
+        milestone_tokens = set(tokenize((m.get("title") or "") + " " + (m.get("description") or "")))
         if not milestone_tokens:
             continue
         matched = [tag for tag in listing_tags if any(_terms_match(tag.lower(), t) for t in milestone_tokens)]
@@ -908,7 +908,7 @@ def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
             best_stage = m
     if not best_stage:
         return None
-    return {"stage": best_stage["stage"], "title": best_stage["title"], "matched_on": len(best_matched), "matched_tags": best_matched, "strength": round(best_strength, 3)}
+    return {"stage": best_stage.get("stage"), "title": best_stage.get("title") or "", "matched_on": len(best_matched), "matched_tags": best_matched, "strength": round(best_strength, 3)}
  
  
 def generate_deep_personalization_insights(anthropic_client, applications: list[dict]) -> dict:
