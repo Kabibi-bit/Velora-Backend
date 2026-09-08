@@ -244,7 +244,7 @@ def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]
     )
     summary = "".join(b.text for b in resp.content if b.type == "text").strip()
  
-    source_text = f'{profile.get("northstar", "")} ' + " ".join(e.get("raw_description", "") for e in entries)
+    source_text = f'{profile.get("northstar") or ""} ' + " ".join(e.get("raw_description") or "" for e in entries)
     flagged = _find_fabricated_numbers(source_text, summary)
     return {"summary": summary, "flagged_numbers": flagged}
  
@@ -261,12 +261,12 @@ def check_ats_alignment(profile: dict, entries: list[dict]) -> dict:
     reusing the same function, rather than re-implementing matching
     logic a second time with its own risk of drifting out of sync).
     """
-    goal_and_skills = f"{profile.get('northstar', '')} {profile.get('skills', '')}"
+    goal_and_skills = f"{profile.get('northstar') or ''} {profile.get('skills') or ''}"
     target_tokens = sorted(_meaningful_tokens(goal_and_skills))
     if not target_tokens:
         return {"matched_keywords": [], "missing_keywords": [], "coverage_pct": 0}
  
-    resume_text = " ".join(f"{e.get('title', '')} {e.get('raw_description', '')}" for e in entries)
+    resume_text = " ".join(f"{e.get('title') or ''} {e.get('raw_description') or ''}" for e in entries)
     resume_tokens = set(tokenize(resume_text))
  
     matched, missing = [], []
@@ -287,10 +287,10 @@ def rank_entries_for_listing(entries: list[dict], listing: dict) -> list[dict]:
     entries sorted by real overlap, each annotated with which of the
     listing's own tags it actually matched.
     """
-    listing_tags = listing.get("tags", [])
+    listing_tags = listing.get("tags") or []
     scored = []
     for e in entries:
-        entry_tokens = set(tokenize(f"{e.get('title', '')} {e.get('raw_description', '')}"))
+        entry_tokens = set(tokenize(f"{e.get('title') or ''} {e.get('raw_description') or ''}"))
         matched_tags = [tag for tag in listing_tags if any(_terms_match(tag.lower(), t) for t in entry_tokens)]
         scored.append({**e, "relevance_tags": matched_tags, "relevance_score": len(matched_tags)})
     scored.sort(key=lambda e: e["relevance_score"], reverse=True)
@@ -320,7 +320,7 @@ def build_skills_section(profile: dict, entries: list[dict]) -> dict:
             explicit_skills.append(s)
     explicit_skills.sort(key=str.lower)
  
-    entry_text = " ".join(e.get("raw_description", "") for e in entries)
+    entry_text = " ".join(e.get("raw_description") or "" for e in entries)
     entry_tokens = _meaningful_tokens(entry_text)
     explicit_lower = {s.lower() for s in explicit_skills}
     suggested = sorted(t for t in entry_tokens if not any(_terms_match(t, s) for s in explicit_lower))
