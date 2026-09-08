@@ -339,6 +339,13 @@ def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(ge
  
     if not body.skill or not body.skill.strip():
         raise HTTPException(status_code=400, detail="skill cannot be empty")
+    if "," in body.skill:
+        # Skills are stored as a single comma-separated string
+        # throughout this codebase - a comma inside one intended
+        # skill name would silently split into two separate, wrong
+        # entries rather than crash, so this is rejected explicitly
+        # rather than corrupt the person's real skills list quietly.
+        raise HTTPException(status_code=400, detail="skill cannot contain a comma - add each skill separately")
     try:
         uuid_module.UUID(user_id)
     except ValueError:
@@ -371,6 +378,8 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
  
     if not body.skill or not body.skill.strip():
         raise HTTPException(status_code=400, detail="skill cannot be empty")
+    if "," in body.skill:
+        raise HTTPException(status_code=400, detail="skill cannot contain a comma - remove each skill separately")
     try:
         uuid_module.UUID(user_id)
     except ValueError:
@@ -386,4 +395,3 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
     entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
     entry_dicts = [{"raw_description": e.raw_description} for e in entries]
     return build_skills_section({"skills": profile.skills}, entry_dicts)
- 
