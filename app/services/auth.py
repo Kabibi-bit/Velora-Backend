@@ -24,14 +24,32 @@ JWT_EXPIRY_HOURS = 24 * 14  # 14 days
  
  
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        # bcrypt's real, underlying limit is 72 BYTES, not characters -
+        # a fundamental property of the algorithm itself (its key
+        # schedule only processes the first 72 bytes of input), not a
+        # library quirk. Without this explicit check, two genuinely
+        # different passwords sharing the same first 72 bytes would
+        # hash identically - a real, silent risk this raises loudly
+        # against instead, regardless of how the installed bcrypt
+        # version itself handles an over-length input.
+        raise ValueError("Password is too long (max 72 bytes once UTF-8 encoded)")
+    return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
  
  
 def verify_password(password: str, password_hash: str) -> bool:
     if not password_hash:
         return False
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        # Mirrors the identical guard in hash_password - a password
+        # over the real 72-byte limit could never have been the one
+        # genuinely hashed in the first place, so this is honestly a
+        # non-match, not a case worth passing through to bcrypt itself.
+        return False
     try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+        return bcrypt.checkpw(password_bytes, password_hash.encode("utf-8"))
     except ValueError:
         return False
  
