@@ -266,7 +266,18 @@ def generate_athlete_roadmap(anthropic_client, sport: str, level: str, career_di
     required_milestone_keys = ("title", "description", "success_criteria", "estimated_timeframe",
                                 "first_action", "resource", "risk", "if_it_works", "if_it_stalls", "stage")
     for m in roadmap["milestones"]:
-        if not all(k in m for k in required_milestone_keys):
+        # Requires each milestone to genuinely be a dict (not e.g. a
+        # raw string that happens to contain every key name as a
+        # substring, which the old "k in m" check alone wouldn't
+        # catch), and each required text field to genuinely be a
+        # real, non-empty string - found via brutal testing that the
+        # old check only verified key existence, so a response with
+        # every key present but every value None would silently pass
+        # and produce a completely meaningless roadmap.
+        if not isinstance(m, dict) or not all(k in m for k in required_milestone_keys):
             raise ValueError(f"an athlete roadmap milestone is missing one or more required keys: {required_milestone_keys}")
+        text_keys = [k for k in required_milestone_keys if k != "stage"]
+        if not all(isinstance(m[k], str) and m[k].strip() for k in text_keys):
+            raise ValueError("an athlete roadmap milestone has a required field that's empty or not real text")
     return roadmap
  
