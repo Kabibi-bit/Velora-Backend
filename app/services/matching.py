@@ -1010,6 +1010,15 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
             flagged_insight_indices.append(i)
     parsed["flagged_insight_indices"] = flagged_insight_indices
  
+    if not isinstance(parsed.get("insights"), list):
+        # Defense in depth for a shared function - the route already
+        # wraps this call in its own try/except, so a malformed shape
+        # isn't a live crash risk today, but this function shouldn't
+        # rely solely on every current and future caller remembering
+        # that. insights specifically, since that's the one field the
+        # frontend directly iterates over to render each finding.
+        raise ValueError(f"personalization insights response had an unexpected shape: {parsed}")
+ 
     return parsed
  
  
