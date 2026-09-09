@@ -30,7 +30,7 @@ class User(Base):
 class Profile(Base):
     __tablename__ = "profiles"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     northstar = Column(Text, nullable=False)
     final_idea = Column(Text)
     timeframe = Column(String)
@@ -73,9 +73,9 @@ class Listing(Base):
 class MatchScore(Base):
     __tablename__ = "match_scores"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
-    profile_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
+    profile_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=False)
     score_pct = Column(Numeric(5, 2), nullable=False)
     goal_match_tags = Column(ARRAY(String))
     skill_match_tags = Column(ARRAY(String))
@@ -87,8 +87,8 @@ class MatchScore(Base):
 class Outcome(Base):
     __tablename__ = "outcomes"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
     status = Column(String, nullable=False)  # applied/interview/rejected/ghosted/offer
     updated_at = Column(DateTime, default=datetime.utcnow)
  
@@ -96,7 +96,7 @@ class Outcome(Base):
 class RoadmapMilestone(Base):
     __tablename__ = "roadmap_milestones"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text)
     success_criteria = Column(Text)
@@ -113,7 +113,7 @@ class RoadmapMilestone(Base):
  
 class RoadmapSummary(Base):
     __tablename__ = "roadmap_summaries"
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     summary = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
  
@@ -121,7 +121,7 @@ class RoadmapSummary(Base):
 class ChatMemory(Base):
     __tablename__ = "chat_memory"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     summary = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
  
@@ -129,8 +129,8 @@ class ChatMemory(Base):
 class Application(Base):
     __tablename__ = "applications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
     draft_content = Column(Text)
     confidence_pct = Column(Numeric(5, 2))
     status = Column(String, default="pending_review")
@@ -146,15 +146,15 @@ class Application(Base):
 class SavedListing(Base):
     __tablename__ = "saved_listings"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
 class Notification(Base):
     __tablename__ = "notifications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     type = Column(String, nullable=False)
     title = Column(String, nullable=False)
     detail = Column(Text)
@@ -164,7 +164,7 @@ class Notification(Base):
  
 class CareerDiscoveryResult(Base):
     __tablename__ = "career_discovery_results"
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     answers = Column(JSONB, nullable=False)
     directions = Column(JSONB, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -173,8 +173,8 @@ class CareerDiscoveryResult(Base):
 class OutreachEmail(Base):
     __tablename__ = "outreach_emails"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
     to_address = Column(String, nullable=False)
     address_verified = Column(Boolean, nullable=False, default=False)
     subject = Column(String, nullable=False)
@@ -195,7 +195,7 @@ class SocialPost(Base):
     """
     __tablename__ = "social_posts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     body = Column(Text, nullable=False)
     video_url = Column(String)
     tag_value = Column(String)
@@ -211,7 +211,7 @@ class AthleteEvent(Base):
     """
     __tablename__ = "athlete_events"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String, nullable=False)
     org = Column(String)
     event_type = Column(String, nullable=False)  # tryout / camp / combine / application_deadline / other
@@ -231,7 +231,7 @@ class AthleteOutreach(Base):
     """
     __tablename__ = "athlete_outreach"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     target_description = Column(Text, nullable=False)
     to_address = Column(String, nullable=False)
     address_verified = Column(Boolean, nullable=False, default=False)
@@ -251,7 +251,7 @@ class AthleteRoadmapMilestone(Base):
     """
     __tablename__ = "athlete_roadmap_milestones"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text)
     success_criteria = Column(Text)
@@ -268,7 +268,7 @@ class AthleteRoadmapMilestone(Base):
  
 class AthleteRoadmapSummary(Base):
     __tablename__ = "athlete_roadmap_summaries"
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     summary = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
  
@@ -287,7 +287,7 @@ class ResumeEntry(Base):
     """
     __tablename__ = "resume_entries"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     entry_type = Column(String, nullable=False)  # work / education / project
     title = Column(String, nullable=False)  # job title, degree, or project name
     org = Column(String)  # employer, school, or None for a personal project
@@ -308,7 +308,7 @@ class ResumeDocument(Base):
     based on something the user never actually said).
     """
     __tablename__ = "resume_documents"
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     summary_line = Column(Text)
     polished_entries = Column(JSONB, nullable=False)  # [{entry_id, title, org, dates, bullets: [str]}]
     entries_snapshot = Column(JSONB, nullable=False)  # raw_description text as it existed at generation time
