@@ -33,8 +33,12 @@ def create_user(payload: UserIn, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}")
 def get_user(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="User not found")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return {"user_id": str(user.id), "email": user.email, "role": user.role}
- 
