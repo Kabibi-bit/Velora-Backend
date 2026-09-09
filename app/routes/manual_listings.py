@@ -8,7 +8,9 @@ features can be tested against real admissions/fellowship data you
 enter yourself. A real pipeline here would mean either paying for a
 data license or building partnerships with individual programs.
 """
-from fastapi import APIRouter, Depends
+import hashlib
+ 
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import date
@@ -32,9 +34,17 @@ class ManualListingIn(BaseModel):
  
 @router.post("")
 def add_manual_listing(payload: ManualListingIn, db: Session = Depends(get_db)):
+    if not payload.title.strip() or not payload.org.strip() or not payload.apply_url.strip():
+        raise HTTPException(status_code=400, detail="title, org, and apply_url cannot be empty")
+    # apply_url anchors this instead of title+org - a real, different
+    # listing at the same org with the same title (plausible in
+    # practice) would otherwise collide against the real, enforced
+    # UNIQUE(source, external_id) constraint and fail with a raw,
+    # unhandled database error instead of ever being added.
+    external_id = "manual_" + hashlib.sha256(payload.apply_url.strip().encode()).hexdigest()[:16]
     listing = Listing(
         source="manual",
-        external_id=f"manual-{payload.title}-{payload.org}",
+        external_id=external_id,
         title=payload.title,
         org=payload.org,
         type=payload.type,
