@@ -102,6 +102,11 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
     Previous profile rows stay in the table - that history is what
     lets the chatbot later explain how a user's goals have changed.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     db.query(Profile).filter(
         Profile.user_id == payload.user_id, Profile.is_current == True  # noqa: E712
     ).update({"is_current": False})
@@ -145,6 +150,11 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}")
 def get_current_profile(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -173,6 +183,11 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}/history")
 def get_profile_history(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return []
     profiles = (
         db.query(Profile)
         .filter(Profile.user_id == user_id)
@@ -199,6 +214,12 @@ def get_potential_score(user_id: str, db: Session = Depends(get_db)):
     """
     from app.models.db_models import RoadmapMilestone, MatchScore
     import re
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
  
     profile = (
         db.query(Profile)
@@ -250,6 +271,11 @@ def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Sess
         # 100 here meant a threshold could be set that no real match
         # could ever reach, silently disabling Auto Apply entirely.
         raise HTTPException(status_code=400, detail="threshold must be between 50 and 97 - 97 is the real ceiling every match score is capped at, so anything higher could never be reached by a real match")
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -265,6 +291,11 @@ def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Sess
  
 @router.get("/{user_id}/auto-apply-settings")
 def get_auto_apply_settings(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
