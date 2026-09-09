@@ -202,20 +202,29 @@ async def extract_tags(description: str, anthropic_client) -> list[str]:
     """
     if not description:
         return []
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=100,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Extract 4-8 lowercase, single/double-word skill or domain tags "
-                "from this job description. Return ONLY a comma-separated list, "
-                "nothing else.\n\n" + description[:2000]
-            ),
-        }],
-    )
-    text = "".join(b.text for b in resp.content if b.type == "text")
-    return [t.strip() for t in text.split(",") if t.strip()]
+    try:
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Extract 4-8 lowercase, single/double-word skill or domain tags "
+                    "from this job description. Return ONLY a comma-separated list, "
+                    "nothing else.\n\n" + description[:2000]
+                ),
+            }],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        return [t.strip() for t in text.split(",") if t.strip()]
+    except Exception:
+        # Both current, real callers (scheduler.py) already wrap this
+        # in their own try/except with this same, honest empty-list
+        # fallback - this isn't fixing a live bug. But a shared
+        # function running "per-listing at scale" shouldn't rely
+        # solely on every current and future caller remembering to
+        # protect it externally.
+        return []
  
  
 # ---------------------------------------------------------------------------
