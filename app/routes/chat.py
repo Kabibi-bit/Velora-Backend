@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -70,22 +70,39 @@ def build_system_context(db: Session, user_id: str) -> str:
  
 @router.post("")
 def chat(payload: ChatIn, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     system = build_system_context(db, payload.user_id)
     messages = payload.history + [{"role": "user", "content": payload.message}]
  
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1000,
-        system=system,
-        messages=messages,
-    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1000,
+            system=system,
+            messages=messages,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not get a reply just now - try again. ({e})")
     reply = "".join(b.text for b in resp.content if b.type == "text")
  
     # Summarize anything durable from this exchange and store it -
     # this is what makes memory persist across sessions, not just within one.
     full_convo = messages + [{"role": "assistant", "content": reply}]
-    summary = summarize_conversation(client, full_convo)
-    store_memory(db, payload.user_id, summary)
+    try:
+        summary = summarize_conversation(client, full_convo)
+        store_memory(db, payload.user_id, summary)
+    except Exception as e:
+        # A real reply was already generated above - a failure here
+        # (summarization API call, or the DB write) must not discard
+        # that and turn a successful chat into an error response. The
+        # person still gets their real reply; only future-session
+        # memory of this exchange is honestly lost, not the exchange
+        # itself.
+        print(f"Chat memory summarization/storage failed (non-fatal, reply still returned): {e}")
  
     return {"reply": reply}
  
