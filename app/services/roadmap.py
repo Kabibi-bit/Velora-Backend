@@ -96,6 +96,15 @@ def generate_roadmap(anthropic_client, profile: dict, skill_gaps: list[str] | No
     for m in parsed["milestones"]:
         if not isinstance(m, dict) or not all(k in m for k in required_milestone_keys):
             raise ValueError(f"A roadmap milestone had an unexpected shape: {m}")
+        text_keys = [k for k in required_milestone_keys if k != "stage"]
+        # Mirrors the identical strengthening already applied to
+        # athletics.py's generate_athlete_roadmap - the check above
+        # only verifies key existence, not whether a value is
+        # genuinely real text. A milestone with every key present but
+        # every value None or empty would otherwise pass silently and
+        # produce a completely meaningless, blank-looking roadmap.
+        if not all(isinstance(m[k], str) and m[k].strip() for k in text_keys):
+            raise ValueError(f"A roadmap milestone has a required field that's empty or not real text: {m}")
     return parsed
  
  
