@@ -33,6 +33,12 @@ def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
     """
     if payload.status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_STATUSES}")
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(payload.user_id)
+        uuid_module.UUID(payload.listing_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id and listing_id must be valid UUIDs")
     outcome = Outcome(user_id=payload.user_id, listing_id=payload.listing_id, status=payload.status)
     db.add(outcome)
  
@@ -55,6 +61,11 @@ def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}")
 def get_outcomes(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return []
     rows = db.query(Outcome).filter(Outcome.user_id == user_id).all()
     return [{"listing_id": str(r.listing_id), "status": r.status, "updated_at": r.updated_at.isoformat()} for r in rows]
  
@@ -65,6 +76,11 @@ def get_outcome_stats(user_id: str, db: Session = Depends(get_db)):
     target chart - counts by status, and counts by month for the last
     3 months, computed from actual logged outcomes (no mock numbers).
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"total": 0, "by_status": {}, "by_month": {}}
     rows = db.query(Outcome).filter(Outcome.user_id == user_id).all()
  
     by_status = {}
@@ -94,6 +110,12 @@ def get_calibration(user_id: str, db: Session = Depends(get_db)):
     """
     from app.models.db_models import Application
     from app.services.calibration import compute_calibration
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"calibration": {}, "total_applications_with_logged_outcomes": 0, "note": None}
  
     outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
     applications = db.query(Application).filter(Application.user_id == user_id).all()
@@ -123,6 +145,12 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db)):
     """
     from app.models.db_models import Application
     from app.services.matching import audit_personalization_effect
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"verdict": "insufficient_data", "sample_size": 0, "note": "No current profile for this user"}
  
     outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
     outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
@@ -156,6 +184,12 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
     """
     from app.models.db_models import Application, Listing
     from app.services.matching import generate_deep_personalization_insights
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"insights": [], "sample_size": 0, "note": "No current profile for this user"}
  
     outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
     outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
@@ -204,6 +238,12 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
     """
     from app.models.db_models import Application
     from app.services.matching import compute_factor_interactions
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"findings": [], "sample_size": 0, "readiness": []}
  
     outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
     outcome_by_listing_status = {str(o.listing_id): o.status for o in outcomes}
