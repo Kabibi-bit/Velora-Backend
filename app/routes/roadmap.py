@@ -64,6 +64,11 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
     first action, a concrete resource, and the specific risk of
     stalling on that step. Replaces any previous roadmap.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -109,6 +114,11 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
  
 @router.get("/{user_id}")
 def get_roadmap(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return {"milestones": [], "summary": None, "note": "No roadmap yet - POST to this URL to generate one."}
     milestones = (
         db.query(RoadmapMilestone)
         .filter(RoadmapMilestone.user_id == user_id)
@@ -167,6 +177,11 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
     """
     if payload.status not in VALID_MILESTONE_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_MILESTONE_STATUSES}")
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(milestone_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Milestone not found")
     milestone = db.query(RoadmapMilestone).filter(RoadmapMilestone.id == milestone_id).first()
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
@@ -191,6 +206,15 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     """Returns Claude's explanation of how one specific listing fits
     the user's stored roadmap.
     """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    try:
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
     profile = (
         db.query(Profile)
         .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
@@ -223,3 +247,4 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not compare this listing to your roadmap just now - try again. ({e})")
     return {"listing": listing.title, "explanation": explanation}
+ 
