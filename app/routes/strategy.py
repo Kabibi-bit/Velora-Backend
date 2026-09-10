@@ -1,0 +1,90 @@
+import os
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+import anthropic
+ 
+from app.db import get_db
+from app.models.db_models import Profile, RoadmapMilestone, Application, SavedListing, Listing, Outcome
+from app.services.strategy import analyze_strategic_position
+ 
+router = APIRouter(prefix="/strategy", tags=["strategy"])
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+ 
+ 
+@router.get("/{user_id}/position")
+def get_strategic_position(user_id: str, db: Session = Depends(get_db)):
+    """The real, new synthesis this platform has never had - not
+    another per-listing match score, but an honest read on where a
+    person genuinely stands given everything they've actually done,
+    and whether their real actions compound toward something or are
+    genuinely disconnected from each other.
+    """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    profile_dict = {
+        "northstar": profile.northstar,
+        "final_idea": profile.final_idea or "",
+        "skills": profile.skills or "",
+        "priorities": profile.priorities or [],
+    }
+ 
+    milestones = (
+        db.query(RoadmapMilestone)
+        .filter(RoadmapMilestone.user_id == user_id)
+        .order_by(RoadmapMilestone.target_stage)
+        .all()
+    )
+    milestones_list = [
+        {"target_stage": m.target_stage, "title": m.title, "status": m.status}
+        for m in milestones
+    ]
+ 
+    applications_rows = (
+        db.query(Application, Listing)
+        .join(Listing, Application.listing_id == Listing.id)
+        .filter(Application.user_id == user_id)
+        .order_by(Application.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    outcomes_by_listing = {
+        str(o.listing_id): o.status
+        for o in db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    }
+    applications_list = [
+        {
+            "listing_title": listing.title,
+            "listing_org": listing.org,
+            "status": a.status,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "outcome_status": outcomes_by_listing.get(str(listing.id)),
+        }
+        for a, listing in applications_rows
+    ]
+ 
+    saved_rows = (
+        db.query(SavedListing, Listing)
+        .join(Listing, SavedListing.listing_id == Listing.id)
+        .filter(SavedListing.user_id == user_id)
+        .limit(15)
+        .all()
+    )
+    saved_list = [{"title": l.title, "org": l.org} for _, l in saved_rows]
+ 
+    try:
+        return analyze_strategic_position(client, profile_dict, milestones_list, applications_list, saved_list)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+ 
