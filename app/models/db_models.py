@@ -352,3 +352,27 @@ class CompanyLeadershipResearch(Base):
     sources = Column(JSONB, nullable=False)
     researched_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class StrategicPositionCache(Base):
+    """A real cache for the strategic-position analysis, keyed by
+    user_id - but unlike CompanyLeadershipResearch above, this one
+    invalidates on CONTENT, not time. A company's real leadership
+    doesn't change day to day, so a 30-day time window is safe there.
+    This person's own real applications/roadmap/saved listings CAN
+    change within minutes - someone could send a new application and
+    immediately re-check their position, and a time-based cache would
+    show them a stale read that doesn't reflect what they just did.
+    input_signature is a short hash of their real, current data shape
+    (count + latest timestamp per source) - cheap to compute, and any
+    genuine change to their real underlying data produces a different
+    signature, forcing a fresh analysis. No genuine change means the
+    same signature, so the cached result is reused correctly. See
+    app/services/strategy.py's get_or_analyze_strategic_position for
+    how this gets checked before ever making a real API call.
+    """
+    __tablename__ = "strategic_position_cache"
+    user_id = Column(UUID(as_uuid=True), primary_key=True)
+    input_signature = Column(String, nullable=False)
+    result = Column(JSONB, nullable=False)
+    analyzed_at = Column(DateTime, default=datetime.utcnow)
+ 
