@@ -395,3 +395,50 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
     entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
     entry_dicts = [{"raw_description": e.raw_description} for e in entries]
     return build_skills_section({"skills": profile.skills}, entry_dicts)
+ 
+ 
+@router.get("/{user_id}/download")
+def download_resume_docx(user_id: str, db: Session = Depends(get_db)):
+    """Real, downloadable .docx - the actual end product every other
+    resume endpoint has been building toward. Uses the person's real,
+    most recently generated resume (via POST /generate/{user_id}) and
+    their real, explicitly-claimed skills - never suggested_additions,
+    since those are inferred, not stated by the person themselves.
+    """
+    from fastapi import Response
+    from app.models.db_models import User
+    from app.services.resume_builder import build_skills_section
+    from app.services.resume_docx import generate_resume_document
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile found for this user")
+ 
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No user found")
+ 
+    doc = db.query(ResumeDocument).filter(ResumeDocument.user_id == user_id).first()
+    if not doc or not doc.polished_entries:
+        raise HTTPException(status_code=404, detail="No generated resume yet - generate one first")
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    entry_dicts = [{"raw_description": e.raw_description} for e in entries]
+    skills_section = build_skills_section({"skills": profile.skills if profile else ""}, entry_dicts)
+ 
+    docx_bytes = generate_resume_document(
+        email=user.email,
+        summary_line=doc.summary_line,
+        polished_entries=doc.polished_entries,
+        skills=skills_section["skills"],
+    )
+ 
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename=resume.docx"},
+    )
+ 
