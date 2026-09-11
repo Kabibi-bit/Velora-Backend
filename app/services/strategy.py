@@ -136,3 +136,61 @@ Return ONLY valid JSON, nothing else, no markdown fences, no commentary."""
  
     return parsed
  
+ 
+def _compute_input_signature(roadmap_milestones: list[dict], applications: list[dict], saved_listings: list[dict]) -> str:
+    """A cheap, real signature of the person's current, actual data
+    shape - not a hash of the full content, just enough to detect a
+    genuine change: how many of each thing exist, and the most
+    recent real timestamp/status seen. Adding a new application,
+    getting a new outcome, or completing a roadmap milestone all
+    change this signature, correctly forcing a fresh analysis. Two
+    calls with the exact same real data produce the exact same
+    signature, correctly reusing the cache.
+    """
+    import hashlib
+    roadmap_sig = "|".join(f"{m.get('target_stage')}:{m.get('status')}" for m in roadmap_milestones)
+    apps_sig = "|".join(f"{a.get('status')}:{a.get('outcome_status')}:{a.get('created_at')}" for a in applications)
+    saved_sig = "|".join(f"{s.get('title')}:{s.get('org')}" for s in saved_listings)
+    raw = f"{roadmap_sig}||{apps_sig}||{saved_sig}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+ 
+ 
+def get_or_analyze_strategic_position(
+    db,
+    anthropic_client,
+    user_id,
+    profile: dict,
+    roadmap_milestones: list[dict],
+    applications: list[dict],
+    saved_listings: list[dict],
+) -> dict:
+    """Checks the real cache before ever making a real, billed API
+    call - without this, a person opening the overview page twice in
+    a row, or refreshing after reading the result, would trigger the
+    same real analysis call again for no real reason. Unlike company
+    leadership research, staleness here is content-based rather than
+    time-based: this person's own real applications/roadmap/saved
+    listings can genuinely change within minutes, so a fixed time
+    window would risk returning a stale read right after they took a
+    real, new action and immediately re-checked their position.
+    """
+    from app.models.db_models import StrategicPositionCache
+    from datetime import datetime
+ 
+    signature = _compute_input_signature(roadmap_milestones, applications, saved_listings)
+    cached = db.query(StrategicPositionCache).filter(StrategicPositionCache.user_id == user_id).first()
+    if cached and cached.input_signature == signature:
+        return {**cached.result, "cached": True}
+ 
+    fresh = analyze_strategic_position(anthropic_client, profile, roadmap_milestones, applications, saved_listings)
+ 
+    if cached:
+        cached.input_signature = signature
+        cached.result = fresh
+        cached.analyzed_at = datetime.utcnow()
+    else:
+        db.add(StrategicPositionCache(user_id=user_id, input_signature=signature, result=fresh))
+    db.commit()
+ 
+    return {**fresh, "cached": False}
+ 
