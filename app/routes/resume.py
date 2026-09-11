@@ -442,3 +442,80 @@ def download_resume_docx(user_id: str, db: Session = Depends(get_db)):
         headers={"Content-Disposition": "attachment; filename=resume.docx"},
     )
  
+ 
+@router.get("/{user_id}/download/tailored/{listing_id}")
+def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """A real, downloadable .docx tailored for one specific listing -
+    connects two pieces that already existed separately: the real
+    relevance-ranking already proven in tailor_resume_for_listing
+    above, and the real .docx generation above. Never re-polishes or
+    changes what any bullet says - the honest content is identical to
+    the master resume, only which entries appear first changes,
+    exactly the same discipline the in-app tailor view already
+    follows. Reuses generate_resume_document completely unchanged;
+    tailoring is entirely just reordering the same polished_entries
+    list before handing it to the same, already-tested generator.
+    """
+    from fastapi import Response
+    from app.models.db_models import User, Listing
+    from app.services.resume_builder import build_skills_section, rank_entries_for_listing
+    from app.services.resume_docx import generate_resume_document
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        # A malformed listing_id or user_id (not just a valid-but-
+        # nonexistent one) would otherwise reach the DB query below
+        # and raise a raw, unhandled database exception - the exact
+        # same real risk already found and fixed in
+        # tailor_resume_for_listing above, so it's checked identically
+        # here rather than assumed to only matter there.
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No user found")
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    doc = db.query(ResumeDocument).filter(ResumeDocument.user_id == user_id).first()
+    if not doc or not doc.polished_entries:
+        raise HTTPException(status_code=404, detail="No generated resume yet - generate one first")
+ 
+    raw_entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    raw_entry_dicts = [{"id": str(e.id), "title": e.title, "raw_description": e.raw_description} for e in raw_entries]
+    listing_dict = {"tags": listing.tags or []}
+    ranked = rank_entries_for_listing(raw_entry_dicts, listing_dict)
+    rank_order = {r["id"]: i for i, r in enumerate(ranked)}
+ 
+    # Reorder the REAL, already-polished entries to match the real
+    # relevance ranking - an entry whose id isn't in rank_order (a
+    # genuinely plausible edge case if an entry was deleted after the
+    # resume was last generated) sorts last rather than crashing.
+    tailored_entries = sorted(
+        doc.polished_entries,
+        key=lambda e: rank_order.get(e.get("entry_id"), len(rank_order)),
+    )
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    entry_dicts_for_skills = [{"raw_description": e.raw_description} for e in raw_entries]
+    skills_section = build_skills_section({"skills": profile.skills if profile else ""}, entry_dicts_for_skills)
+ 
+    docx_bytes = generate_resume_document(
+        email=user.email,
+        summary_line=doc.summary_line,
+        polished_entries=tailored_entries,
+        skills=skills_section["skills"],
+    )
+ 
+    safe_org = "".join(c for c in (listing.org or "resume") if c.isalnum() or c in " -_").strip().replace(" ", "_") or "resume"
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={safe_org}_resume.docx"},
+    )
+ 
