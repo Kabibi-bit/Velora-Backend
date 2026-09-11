@@ -41,12 +41,20 @@ def _format_roadmap_for_prompt(milestones: list[dict]) -> str:
     return "\n".join(lines)
  
  
+def _format_previous_analysis_for_prompt(previous: dict | None) -> str:
+    if not previous:
+        return None
+    return (f"Their position as read last time: \"{previous.get('current_position', '')}\"\n"
+            f"The next move suggested last time: \"{(previous.get('next_move') or {}).get('action', '')}\"")
+ 
+ 
 def analyze_strategic_position(
     anthropic_client,
     profile: dict,
     roadmap_milestones: list[dict],
     applications: list[dict],
     saved_listings: list[dict],
+    previous_analysis: dict | None = None,
 ) -> dict:
     """The real, new synthesis this app has never had: not "does this
     ONE listing fit", but "given everything this person has actually
@@ -54,13 +62,32 @@ def analyze_strategic_position(
     leverage next move". Grounds the analysis in real, concrete data
     (real applications sent, real outcomes received, real roadmap
     progress) rather than generic career-stage advice.
+ 
+    previous_analysis, when provided, is the most recent real result
+    on record for this person - what makes this genuinely
+    longitudinal rather than a single, isolated snapshot each time.
+    The same anti-fabrication discipline that governs compounding
+    connections governs this too: a model asked whether real progress
+    happened has a genuine incentive to manufacture encouraging
+    change even where none exists, so the prompt is explicit that
+    "nothing has genuinely changed" is a valid, honest finding.
     """
     applications_text = _format_applications_for_prompt(applications)
     roadmap_text = _format_roadmap_for_prompt(roadmap_milestones)
     saved_text = ", ".join(f"\"{s.get('title', '')}\" at {s.get('org', '')}" for s in saved_listings[:10]) or "None saved yet."
+    previous_text = _format_previous_analysis_for_prompt(previous_analysis)
+    previous_block = f"\n{previous_text}\n" if previous_text else ""
+    previous_instruction = (
+        "\n\n4. Since you have a real record of their previous position above, explicitly compare it against their current, real situation. Has genuine, measurable progress happened since then (e.g. a new real outcome, a completed roadmap milestone, real movement on the next move suggested last time)? Or has nothing genuinely changed? Either is a valid, honest finding - if their real data shows no meaningful movement since the last check, say that plainly rather than manufacturing encouraging-sounding change that isn't actually there. Do not credit them with \"progress\" for actions that were already reflected in the previous read."
+        if previous_text else ""
+    )
+    momentum_key_instruction = (
+        "\n- momentum_since_last_check: an object with \"changed\" (true only if something real and specific genuinely changed since the previous position above) and \"summary\" (1-2 honest sentences - either naming the real, specific change, or plainly stating that nothing has genuinely moved since last time)"
+        if previous_text else ""
+    )
  
     prompt = f"""A candidate's real, stated goal: "{profile.get('northstar', 'not specified')}". What "made it" looks like to them: "{profile.get('final_idea', 'not specified')}". Their stated skills: "{profile.get('skills', 'not specified')}". What matters most to them: {', '.join(profile.get('priorities') or []) or 'not specified'}.
- 
+{previous_block}
 Their real roadmap (their own stated plan):
 {roadmap_text}
  
@@ -69,19 +96,19 @@ Their real applications actually sent, with real outcomes where known:
  
 Listings they've saved but not yet acted on: {saved_text}
  
-You are synthesizing this person's REAL, accumulated history - not scoring one listing in isolation. Answer three things, grounded ONLY in what's actually here:
+You are synthesizing this person's REAL, accumulated history - not scoring one listing in isolation. Answer these things, grounded ONLY in what's actually here:
  
 1. An honest, specific read on where they genuinely stand right now - their real momentum (or lack of it), based on the actual pattern of applications/outcomes/roadmap progress above, not a generic assessment of "early career" or similar. If the real data shows stalled momentum or no clear direction, say that plainly rather than finding false encouragement. Also explicitly check whether their real, actual applications align with their stated goal above - if their real behavior points somewhere genuinely different from what they said they want (e.g. their stated goal is one field but every real application sent is in a different one), name that honestly. This kind of real, checkable mismatch is one of the most valuable things this analysis can surface, so don't let a focus on "momentum" alone cause you to miss it.
  
 2. Whether their real actions so far genuinely compound - do any of their actual applications, roadmap progress, or saved listings build on each other in a real, specific way (e.g. an application to a smaller company in the same real domain as their stated goal genuinely builds real, checkable experience toward a saved listing at a bigger one)? This must be a REAL, SPECIFIC connection between things that actually appear above - if their actions are genuinely disconnected from each other with no real compounding relationship, say that honestly rather than inventing a narrative thread that isn't there. Do not stitch together two unrelated actions into a false "strategy" - a genuine absence of connection is a real, useful finding, not a failure to find one. A real connection is something that has ALREADY happened - a real outcome, a real shared company, a real skill actually demonstrated in one place that a specific other listing actually requires. It is not two independent, still-pending applications in the same broad field that COULD matter to each other IF a future outcome goes a certain way - "if either produces an offer, it would create leverage" is speculation about a hypothetical future, not a real, existing compounding relationship, even when the underlying field matches. If the only relationship you can point to is that kind of hypothetical, treat it as no genuine connection rather than a real one.
  
-3. Given all of the above, ONE specific, highest-leverage next move - not a generic "apply to more listings" but a specific action that genuinely compounds given their real, particular situation, and a concrete reason why THIS one, not something else.
+3. Given all of the above, ONE specific, highest-leverage next move - not a generic "apply to more listings" but a specific action that genuinely compounds given their real, particular situation, and a concrete reason why THIS one, not something else.{previous_instruction}
  
 Return a JSON object with exactly these four keys:
 - current_position: 2-3 honest, specific sentences per point 1 above
 - compounding_connections: an array of 0-3 strings, each describing one real, specific compounding relationship you found (empty array if genuinely none exist - do not force one)
 - has_genuine_compounding: true only if compounding_connections is non-empty and each entry describes a real, specific, checkable relationship - false if their actions are genuinely disconnected
-- next_move: an object with "action" (one specific, concrete thing to do) and "why_this_compounds" (1-2 sentences on why this specific move, given their real situation, builds on what already exists rather than starting a new, disconnected thread)
+- next_move: an object with "action" (one specific, concrete thing to do) and "why_this_compounds" (1-2 sentences on why this specific move, given their real situation, builds on what already exists rather than starting a new, disconnected thread){momentum_key_instruction}
  
 Return ONLY valid JSON, nothing else, no markdown fences, no commentary."""
  
@@ -125,6 +152,11 @@ Return ONLY valid JSON, nothing else, no markdown fences, no commentary."""
     if not isinstance(next_move, dict) or not isinstance(next_move.get("action"), str) or not next_move["action"].strip() \
        or not isinstance(next_move.get("why_this_compounds"), str) or not next_move["why_this_compounds"].strip():
         raise ValueError(f"Strategic position response has an incomplete next_move: {parsed}")
+    if previous_analysis:
+        momentum = parsed.get("momentum_since_last_check")
+        if not isinstance(momentum, dict) or not isinstance(momentum.get("changed"), bool) \
+           or not isinstance(momentum.get("summary"), str) or not momentum["summary"].strip():
+            raise ValueError(f"Strategic position response has an incomplete momentum_since_last_check: {parsed}")
  
     # Honest consistency check between has_genuine_compounding and the
     # actual, real content of compounding_connections - a genuinely
@@ -174,7 +206,7 @@ def get_or_analyze_strategic_position(
     window would risk returning a stale read right after they took a
     real, new action and immediately re-checked their position.
     """
-    from app.models.db_models import StrategicPositionCache
+    from app.models.db_models import StrategicPositionCache, StrategicPositionHistory
     from datetime import datetime
  
     signature = _compute_input_signature(roadmap_milestones, applications, saved_listings)
@@ -182,7 +214,17 @@ def get_or_analyze_strategic_position(
     if cached and cached.input_signature == signature:
         return {**cached.result, "cached": True}
  
-    fresh = analyze_strategic_position(anthropic_client, profile, roadmap_milestones, applications, saved_listings)
+    previous_entry = (
+        db.query(StrategicPositionHistory)
+        .filter(StrategicPositionHistory.user_id == user_id)
+        .order_by(StrategicPositionHistory.analyzed_at.desc())
+        .first()
+    )
+    previous_analysis = previous_entry.result if previous_entry else None
+ 
+    fresh = analyze_strategic_position(
+        anthropic_client, profile, roadmap_milestones, applications, saved_listings, previous_analysis=previous_analysis
+    )
  
     if cached:
         cached.input_signature = signature
@@ -190,6 +232,7 @@ def get_or_analyze_strategic_position(
         cached.analyzed_at = datetime.utcnow()
     else:
         db.add(StrategicPositionCache(user_id=user_id, input_signature=signature, result=fresh))
+    db.add(StrategicPositionHistory(user_id=user_id, input_signature=signature, result=fresh))
     db.commit()
  
     return {**fresh, "cached": False}
