@@ -376,3 +376,25 @@ class StrategicPositionCache(Base):
     result = Column(JSONB, nullable=False)
     analyzed_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class StrategicPositionHistory(Base):
+    """A real, append-only log of every strategic-position analysis
+    ever run for a person - distinct from StrategicPositionCache
+    above, which only ever holds the single most recent result and
+    exists purely to avoid a redundant API call. This table is what
+    makes the feature genuinely longitudinal rather than a single,
+    isolated snapshot each time: without a real record of what was
+    true last time, a new analysis has no way to say whether real,
+    measurable progress happened since then, or whether things have
+    genuinely stalled - it can only ever describe the current moment
+    in isolation. See app/services/strategy.py's
+    get_or_analyze_strategic_position for how the most recent entry
+    here gets fed into the next real analysis as genuine context.
+    """
+    __tablename__ = "strategic_position_history"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    input_signature = Column(String, nullable=False)
+    result = Column(JSONB, nullable=False)
+    analyzed_at = Column(DateTime, default=datetime.utcnow)
+ 
