@@ -1,0 +1,233 @@
+import os
+import secrets
+from datetime import datetime
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+import anthropic
+ 
+from app.db import get_db
+from app.models.db_models import EngagementSuggestion, Profile, User
+ 
+router = APIRouter(prefix="/engagement", tags=["engagement"])
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+ 
+ 
+def _suggestion_to_dict(s: EngagementSuggestion) -> dict:
+    return {
+        "id": str(s.id),
+        "post_content": s.post_content,
+        "poster_context": s.poster_context,
+        "drafted_question": s.drafted_question,
+        "is_smaller_decision_maker": s.is_smaller_decision_maker,
+        "reasoning": s.reasoning,
+        "status": s.status,
+        "email_sent_at": s.email_sent_at.isoformat() if s.email_sent_at else None,
+        "responded_at": s.responded_at.isoformat() if s.responded_at else None,
+        "communication_log": s.communication_log or [],
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    }
+ 
+ 
+class DraftIn(BaseModel):
+    user_id: str
+    post_content: str
+    poster_context: str | None = None
+ 
+ 
+@router.post("/draft")
+def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db)):
+    """Drafts a real, thoughtful engagement question for a real post
+    the person pasted in themselves - never scrapes or auto-posts,
+    see app/services/engagement.py's module docstring for why.
+    """
+    from app.services.engagement import draft_engagement_suggestion
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(payload.user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    if not payload.post_content or not payload.post_content.strip():
+        raise HTTPException(status_code=400, detail="post_content cannot be empty")
+ 
+    profile = db.query(Profile).filter(Profile.user_id == payload.user_id, Profile.is_current == True).first()  # noqa: E712
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
+ 
+    try:
+        result = draft_engagement_suggestion(client, profile_dict, payload.post_content.strip(), payload.poster_context)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+ 
+    suggestion = EngagementSuggestion(
+        user_id=payload.user_id,
+        post_content=payload.post_content.strip(),
+        poster_context=payload.poster_context,
+        drafted_question=result["drafted_question"],
+        is_smaller_decision_maker=result["is_smaller_decision_maker"],
+        reasoning=result["reasoning"],
+        status="drafted",
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+    return _suggestion_to_dict(suggestion)
+ 
+ 
+@router.get("/{user_id}")
+def list_suggestions(user_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        return []
+    suggestions = (
+        db.query(EngagementSuggestion)
+        .filter(EngagementSuggestion.user_id == user_id)
+        .order_by(EngagementSuggestion.created_at.desc())
+        .all()
+    )
+    return [_suggestion_to_dict(s) for s in suggestions]
+ 
+ 
+@router.post("/{suggestion_id}/send-email")
+def send_suggestion_email(suggestion_id: str, db: Session = Depends(get_db)):
+    """Emails the real, drafted suggestion to the person's own
+    registered address, with a real, secure, single-use accept link -
+    this is the "if the AI finds someone they like, they'll email the
+    candidate saying it's a good idea to post this" flow, built on
+    the real Resend integration already proven in email_send.py.
+    """
+    from app.services.email_send import send_email
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(suggestion_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    suggestion = db.query(EngagementSuggestion).filter(EngagementSuggestion.id == suggestion_id).first()
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    user = db.query(User).filter(User.id == suggestion.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No user found for this suggestion")
+ 
+    # A real, cryptographically secure, single-use token - not a
+    # guessable id, since this link works without any login.
+    token = secrets.token_urlsafe(32)
+    suggestion.accept_token = token
+ 
+    app_base_url = os.getenv("APP_BASE_URL", "https://app.example.com")
+    accept_url = f"{app_base_url.rstrip('/')}/engagement/accept/{token}"
+ 
+    subject = "A real opportunity worth engaging with"
+    body = (
+        f"We found a post worth a thoughtful reply:\n\n"
+        f'"{suggestion.post_content[:280]}{"..." if len(suggestion.post_content) > 280 else ""}"\n\n'
+        f"Suggested question:\n\"{suggestion.drafted_question}\"\n\n"
+        f"Why this one: {suggestion.reasoning}\n\n"
+        f"If this looks good, confirm here and we'll mark it ready to post:\n{accept_url}\n\n"
+        f"You'll still post it yourself - we never post on your behalf."
+    )
+ 
+    try:
+        send_email(user.email, subject, body)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not send the email just now: {e}")
+ 
+    suggestion.status = "emailed"
+    suggestion.email_sent_at = datetime.utcnow()
+    db.commit()
+    db.refresh(suggestion)
+    return _suggestion_to_dict(suggestion)
+ 
+ 
+@router.get("/accept/{token}")
+def accept_suggestion(token: str, db: Session = Depends(get_db)):
+    """The real, public, no-login endpoint the email's accept link
+    points to - deliberately requires no authentication, since the
+    whole point is accepting directly from an email. Genuinely single-
+    use: the token is cleared after a real accept, so the same link
+    can't be replayed.
+    """
+    if not token or len(token) < 20:
+        raise HTTPException(status_code=404, detail="This link is invalid or has expired")
+ 
+    suggestion = db.query(EngagementSuggestion).filter(EngagementSuggestion.accept_token == token).first()
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="This link is invalid or has expired")
+ 
+    if suggestion.status == "accepted":
+        return {"already_accepted": True, "drafted_question": suggestion.drafted_question}
+ 
+    suggestion.status = "accepted"
+    suggestion.responded_at = datetime.utcnow()
+    suggestion.accept_token = None  # genuinely single-use - cleared so this exact link can't be replayed
+    db.commit()
+    return {"already_accepted": False, "drafted_question": suggestion.drafted_question, "post_content": suggestion.post_content}
+ 
+ 
+class DeclineIn(BaseModel):
+    pass
+ 
+ 
+@router.post("/{suggestion_id}/decline")
+def decline_suggestion(suggestion_id: str, db: Session = Depends(get_db)):
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(suggestion_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    suggestion = db.query(EngagementSuggestion).filter(EngagementSuggestion.id == suggestion_id).first()
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    suggestion.status = "declined"
+    suggestion.responded_at = datetime.utcnow()
+    suggestion.accept_token = None
+    db.commit()
+    db.refresh(suggestion)
+    return _suggestion_to_dict(suggestion)
+ 
+ 
+class LogEntryIn(BaseModel):
+    note: str
+ 
+ 
+@router.post("/{suggestion_id}/log")
+def add_communication_log_entry(suggestion_id: str, payload: LogEntryIn, db: Session = Depends(get_db)):
+    """Records a real, user-entered update on what actually happened
+    after posting - a reply they got, a follow-up question - the
+    "response and questions and communication will all be considered
+    by the AI" piece. This is what a future draft_engagement_suggestion
+    call for the same real thread could read as genuine context,
+    mirroring the same "history informs the next suggestion" pattern
+    already proven for strategic-position analysis.
+    """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(suggestion_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    if not payload.note or not payload.note.strip():
+        raise HTTPException(status_code=400, detail="note cannot be empty")
+ 
+    suggestion = db.query(EngagementSuggestion).filter(EngagementSuggestion.id == suggestion_id).first()
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+ 
+    log = list(suggestion.communication_log or [])
+    log.append({"at": datetime.utcnow().isoformat(), "note": payload.note.strip()})
+    suggestion.communication_log = log
+    db.commit()
+    db.refresh(suggestion)
+    return _suggestion_to_dict(suggestion)
+ 
