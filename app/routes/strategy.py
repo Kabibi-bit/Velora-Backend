@@ -5,7 +5,7 @@ import anthropic
  
 from app.db import get_db
 from app.models.db_models import Profile, RoadmapMilestone, Application, SavedListing, Listing, Outcome
-from app.services.strategy import analyze_strategic_position
+from app.services.strategy import get_or_analyze_strategic_position
  
 router = APIRouter(prefix="/strategy", tags=["strategy"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -84,7 +84,7 @@ def get_strategic_position(user_id: str, db: Session = Depends(get_db)):
     saved_list = [{"title": l.title, "org": l.org} for _, l in saved_rows]
  
     try:
-        return analyze_strategic_position(client, profile_dict, milestones_list, applications_list, saved_list)
+        return get_or_analyze_strategic_position(db, client, user_id, profile_dict, milestones_list, applications_list, saved_list)
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
  
