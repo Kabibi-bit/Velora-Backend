@@ -398,3 +398,39 @@ class StrategicPositionHistory(Base):
     result = Column(JSONB, nullable=False)
     analyzed_at = Column(DateTime, default=datetime.utcnow)
  
+ 
+class EngagementSuggestion(Base):
+    """A real, AI-drafted suggestion for engaging with a specific,
+    real post the person pasted in - never something scraped or
+    auto-posted on their behalf (see draft_engagement_suggestion's
+    own docstring for why: LinkedIn's API terms explicitly prohibit
+    both automated scraping and automated posting/commenting on a
+    person's behalf, so the person always supplies the real post
+    content themselves, and always reviews and posts the suggestion
+    manually - this only ever drafts the words, never acts).
+ 
+    accept_token is a real, unguessable, single-use token embedded in
+    the email link - accepting a suggestion means marking it reviewed
+    and copyable in-app, not auto-posting anything anywhere.
+    communication_log is a real, append-only record of what happened
+    after (a reply the person got, a follow-up question) so a later
+    suggestion can genuinely build on what actually happened, not
+    just the original post in isolation - mirrors the same real
+    "history informs the next suggestion" pattern already proven in
+    StrategicPositionHistory above, applied to this different feature.
+    """
+    __tablename__ = "engagement_suggestions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    post_content = Column(Text, nullable=False)  # the real post text the person pasted in
+    poster_context = Column(Text)  # what the person told us about who posted it (role, company, etc.) - optional, their own words
+    drafted_question = Column(Text, nullable=False)
+    is_smaller_decision_maker = Column(Boolean, default=False)  # the AI's real, stated read on whether this poster looks like a more accessible, smaller-scale decision-maker
+    reasoning = Column(Text)  # why this question, in plain language - never hidden from the person who has to decide whether to actually post it
+    status = Column(String, nullable=False, default="drafted")  # drafted / emailed / accepted / declined
+    accept_token = Column(String, unique=True)
+    email_sent_at = Column(DateTime)
+    responded_at = Column(DateTime)
+    communication_log = Column(JSONB, default=list)  # [{at, note}] - real, user-entered updates on what happened after
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
