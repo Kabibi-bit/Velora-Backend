@@ -127,17 +127,41 @@ def send_suggestion_email(suggestion_id: str, db: Session = Depends(get_db)):
     accept_url = f"{app_base_url.rstrip('/')}/engagement/accept/{token}"
  
     subject = "A real opportunity worth engaging with"
+    truncated_post = f'{suggestion.post_content[:280]}{"..." if len(suggestion.post_content) > 280 else ""}'
     body = (
         f"We found a post worth a thoughtful reply:\n\n"
-        f'"{suggestion.post_content[:280]}{"..." if len(suggestion.post_content) > 280 else ""}"\n\n'
+        f'"{truncated_post}"\n\n'
         f"Suggested question:\n\"{suggestion.drafted_question}\"\n\n"
         f"Why this one: {suggestion.reasoning}\n\n"
         f"If this looks good, confirm here and we'll mark it ready to post:\n{accept_url}\n\n"
         f"You'll still post it yourself - we never post on your behalf."
     )
  
+    import html as html_module
+    html_body = f"""<!DOCTYPE html>
+<html><body style="margin:0; padding:0; background-color:#f4f4f7; font-family:-apple-system,Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:32px 16px;">
+<tr><td align="center">
+<table role="presentation" width="100%" style="max-width:520px; background-color:#ffffff; border-radius:12px; overflow:hidden;">
+<tr><td style="padding:32px;">
+<p style="margin:0 0 16px; font-size:13px; color:#8a8a9a; text-transform:uppercase; letter-spacing:0.04em;">A real opportunity worth engaging with</p>
+<p style="margin:0 0 8px; font-size:13px; color:#6b6b7a; font-weight:600;">The post</p>
+<p style="margin:0 0 20px; font-size:14px; color:#3a3a45; line-height:1.6; padding:12px 16px; background-color:#f7f7fa; border-radius:8px; border-left:3px solid #d0d0dc;">{html_module.escape(truncated_post)}</p>
+<p style="margin:0 0 8px; font-size:13px; color:#6b6b7a; font-weight:600;">Suggested reply</p>
+<p style="margin:0 0 20px; font-size:15px; color:#1a1a24; line-height:1.6; font-weight:500;">{html_module.escape(suggestion.drafted_question)}</p>
+<p style="margin:0 0 24px; font-size:13px; color:#8a8a9a; line-height:1.6; font-style:italic;">{html_module.escape(suggestion.reasoning)}</p>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:8px; background-color:#1a1a24;">
+<a href="{accept_url}" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:600; color:#ffffff; text-decoration:none;">Looks good, mark this ready to post &rarr;</a>
+</td></tr></table>
+<p style="margin:24px 0 0; font-size:12px; color:#a0a0ac; line-height:1.5;">You'll still post it yourself - we never post on your behalf.</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>"""
+ 
     try:
-        send_email(user.email, subject, body)
+        send_email(user.email, subject, body, html_body=html_body)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not send the email just now: {e}")
  
