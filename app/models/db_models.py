@@ -151,6 +151,20 @@ class SavedListing(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
+class DismissedListing(Base):
+    """A real, explicit 'not interested, never show this again' record
+    - the backend counterpart to the frontend's dismissListing. Kept
+    as its own table (not a status flag on Application) since a
+    person can genuinely dismiss a listing they never applied to at
+    all - dismissal and application are two separate, real actions.
+    """
+    __tablename__ = "dismissed_listings"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
 class Notification(Base):
     __tablename__ = "notifications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
