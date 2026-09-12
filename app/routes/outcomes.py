@@ -263,3 +263,73 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
     readiness = get_interaction_readiness(app_input)
     return {"findings": findings, "sample_size": len(app_input), "readiness": readiness}
  
+ 
+STALE_THRESHOLD_DAYS = 14
+INTERVIEW_FOLLOWUP_DAYS = 7
+ 
+ 
+@router.get("/{user_id}/reminders")
+def get_reminders(user_id: str, db: Session = Depends(get_db)):
+    """Surfaces real, time-sensitive nudges Jobright's tracker lacks -
+    it has statuses (Applied, Interviewing, Offer...) but no layer
+    prompting timely action on them. Two genuinely distinct cases,
+    mirroring the frontend exactly:
+ 
+    - interview_followups: an application whose LATEST outcome is
+      'interview', logged more than INTERVIEW_FOLLOWUP_DAYS ago with
+      nothing newer. Higher-stakes and time-sensitive (interview
+      momentum decays fast), so a shorter window.
+    - stale_applications: a genuinely sent application with NO logged
+      outcome at all, past STALE_THRESHOLD_DAYS - a cold, never-
+      answered application, a real signal to focus elsewhere.
+ 
+    An application that progressed past interview (to offer or
+    rejection) is correctly in neither list.
+    """
+    import uuid as uuid_module
+    from app.models.db_models import Application
+    from datetime import datetime
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
+    now = datetime.utcnow()
+ 
+    # Each application's LATEST outcome by listing - a later 'offer'
+    # must genuinely supersede an earlier 'interview', so ordering by
+    # updated_at and keeping the most recent per listing is the only
+    # correct read, not just any interview row that ever existed.
+    outcome_rows = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == user_id)
+        .order_by(Outcome.updated_at.asc())
+        .all()
+    )
+    latest_outcome = {}  # listing_id -> (status, updated_at), last write wins via asc ordering
+    for o in outcome_rows:
+        latest_outcome[str(o.listing_id)] = (o.status, o.updated_at)
+ 
+    applications = db.query(Application).filter(Application.user_id == user_id).all()
+    listings = {str(l.id): l for l in db.query(Listing).all()}
+ 
+    interview_followups = []
+    stale_applications = []
+    for a in applications:
+        lid = str(a.listing_id)
+        listing = listings.get(lid)
+        title = listing.title if listing else "a listing"
+        org = listing.org if listing else ""
+        outcome = latest_outcome.get(lid)
+ 
+        if outcome and outcome[0] == "interview":
+            days = (now - outcome[1]).days
+            if days >= INTERVIEW_FOLLOWUP_DAYS:
+                interview_followups.append({"listing_id": lid, "title": title, "org": org, "days_since_interview": days})
+        elif not outcome and a.status == "sent" and a.sent_at:
+            days = (now - a.sent_at).days
+            if days >= STALE_THRESHOLD_DAYS:
+                stale_applications.append({"listing_id": lid, "title": title, "org": org, "days_since_sent": days})
+ 
+    return {"interview_followups": interview_followups, "stale_applications": stale_applications}
+ 
