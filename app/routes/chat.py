@@ -50,10 +50,13 @@ def build_system_context(db: Session, user_id: str) -> str:
         )
         listings = db.query(Listing).all()
         if listings:
+            from app.models.db_models import DismissedListing
+            dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user_id).all()}
             ranked = rank_listings(
                 [_listing_to_dict(l) for l in listings],
                 _profile_to_dict(profile),
                 top_n=6,
+                dismissed_ids=dismissed_ids,
             )
             if ranked:
                 base += "\n\nTheir current top matches:\n"
