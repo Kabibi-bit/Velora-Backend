@@ -48,6 +48,7 @@ class Profile(Base):
     is_current = Column(Boolean, default=True)
     auto_apply_enabled = Column(Boolean, nullable=False, default=False)
     auto_apply_threshold = Column(Integer, nullable=False, default=80)
+    notification_preferences = Column(JSONB, default=lambda: {"scan": True, "auto_apply": True, "outreach_sent": True, "applications_approved": True})
     created_at = Column(DateTime, default=datetime.utcnow)
  
     user = relationship("User", back_populates="profiles")
