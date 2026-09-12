@@ -41,6 +41,22 @@ def _format_roadmap_for_prompt(milestones: list[dict]) -> str:
     return "\n".join(lines)
  
  
+def _format_engagement_for_prompt(engagement_activity: list[dict]) -> str:
+    """Only ever includes suggestions the person genuinely accepted -
+    a drafted-but-ignored or declined suggestion isn't a real signal
+    about what they actually did, so including it would risk the
+    model treating a hypothetical as if it were real activity.
+    """
+    accepted = [e for e in (engagement_activity or []) if e.get("status") == "accepted"]
+    if not accepted:
+        return "No real, accepted engagement activity yet."
+    lines = []
+    for e in accepted:
+        log_note = f", follow-up: {e['communication_log'][-1]['note']}" if e.get("communication_log") else ""
+        lines.append(f"- Genuinely posted a reply to a real post ({e.get('poster_context') or 'poster context not given'}){log_note}")
+    return "\n".join(lines)
+ 
+ 
 def _format_previous_analysis_for_prompt(previous: dict | None) -> str:
     if not previous:
         return None
@@ -55,6 +71,7 @@ def analyze_strategic_position(
     applications: list[dict],
     saved_listings: list[dict],
     previous_analysis: dict | None = None,
+    engagement_activity: list[dict] | None = None,
 ) -> dict:
     """The real, new synthesis this app has never had: not "does this
     ONE listing fit", but "given everything this person has actually
@@ -75,6 +92,7 @@ def analyze_strategic_position(
     applications_text = _format_applications_for_prompt(applications)
     roadmap_text = _format_roadmap_for_prompt(roadmap_milestones)
     saved_text = ", ".join(f"\"{s.get('title', '')}\" at {s.get('org', '')}" for s in saved_listings[:10]) or "None saved yet."
+    engagement_text = _format_engagement_for_prompt(engagement_activity)
     previous_text = _format_previous_analysis_for_prompt(previous_analysis)
     previous_block = f"\n{previous_text}\n" if previous_text else ""
     previous_instruction = (
@@ -96,11 +114,14 @@ Their real applications actually sent, with real outcomes where known:
  
 Listings they've saved but not yet acted on: {saved_text}
  
+Their real, genuine engagement activity (only suggestions they actually accepted and posted, never ones drafted but ignored):
+{engagement_text}
+ 
 You are synthesizing this person's REAL, accumulated history - not scoring one listing in isolation. Answer these things, grounded ONLY in what's actually here:
  
 1. An honest, specific read on where they genuinely stand right now - their real momentum (or lack of it), based on the actual pattern of applications/outcomes/roadmap progress above, not a generic assessment of "early career" or similar. If the real data shows stalled momentum or no clear direction, say that plainly rather than finding false encouragement. Also explicitly check whether their real, actual applications align with their stated goal above - if their real behavior points somewhere genuinely different from what they said they want (e.g. their stated goal is one field but every real application sent is in a different one), name that honestly. This kind of real, checkable mismatch is one of the most valuable things this analysis can surface, so don't let a focus on "momentum" alone cause you to miss it.
  
-2. Whether their real actions so far genuinely compound - do any of their actual applications, roadmap progress, or saved listings build on each other in a real, specific way (e.g. an application to a smaller company in the same real domain as their stated goal genuinely builds real, checkable experience toward a saved listing at a bigger one)? This must be a REAL, SPECIFIC connection between things that actually appear above - if their actions are genuinely disconnected from each other with no real compounding relationship, say that honestly rather than inventing a narrative thread that isn't there. Do not stitch together two unrelated actions into a false "strategy" - a genuine absence of connection is a real, useful finding, not a failure to find one. A real connection is something that has ALREADY happened - a real outcome, a real shared company, a real skill actually demonstrated in one place that a specific other listing actually requires. It is not two independent, still-pending applications in the same broad field that COULD matter to each other IF a future outcome goes a certain way - "if either produces an offer, it would create leverage" is speculation about a hypothetical future, not a real, existing compounding relationship, even when the underlying field matches. If the only relationship you can point to is that kind of hypothetical, treat it as no genuine connection rather than a real one.
+2. Whether their real actions so far genuinely compound - do any of their actual applications, roadmap progress, saved listings, or real engagement activity build on each other in a real, specific way (e.g. an application to a smaller company in the same real domain as their stated goal genuinely builds real, checkable experience toward a saved listing at a bigger one, or a real, accepted engagement reply to someone at a company connects to a real application or saved listing there)? This must be a REAL, SPECIFIC connection between things that actually appear above - if their actions are genuinely disconnected from each other with no real compounding relationship, say that honestly rather than inventing a narrative thread that isn't there. Do not stitch together two unrelated actions into a false "strategy" - a genuine absence of connection is a real, useful finding, not a failure to find one. A real connection is something that has ALREADY happened - a real outcome, a real shared company, a real skill actually demonstrated in one place that a specific other listing actually requires. It is not two independent, still-pending applications in the same broad field that COULD matter to each other IF a future outcome goes a certain way - "if either produces an offer, it would create leverage" is speculation about a hypothetical future, not a real, existing compounding relationship, even when the underlying field matches. If the only relationship you can point to is that kind of hypothetical, treat it as no genuine connection rather than a real one.
  
 3. Given all of the above, ONE specific, highest-leverage next move - not a generic "apply to more listings" but a specific action that genuinely compounds given their real, particular situation, and a concrete reason why THIS one, not something else.{previous_instruction}
  
@@ -169,7 +190,7 @@ Return ONLY valid JSON, nothing else, no markdown fences, no commentary."""
     return parsed
  
  
-def _compute_input_signature(roadmap_milestones: list[dict], applications: list[dict], saved_listings: list[dict]) -> str:
+def _compute_input_signature(roadmap_milestones: list[dict], applications: list[dict], saved_listings: list[dict], engagement_activity: list[dict] | None = None) -> str:
     """A cheap, real signature of the person's current, actual data
     shape - not a hash of the full content, just enough to detect a
     genuine change: how many of each thing exist, and the most
@@ -183,7 +204,10 @@ def _compute_input_signature(roadmap_milestones: list[dict], applications: list[
     roadmap_sig = "|".join(f"{m.get('target_stage')}:{m.get('status')}" for m in roadmap_milestones)
     apps_sig = "|".join(f"{a.get('status')}:{a.get('outcome_status')}:{a.get('created_at')}" for a in applications)
     saved_sig = "|".join(f"{s.get('title')}:{s.get('org')}" for s in saved_listings)
-    raw = f"{roadmap_sig}||{apps_sig}||{saved_sig}"
+    engagement_sig = "|".join(
+        f"{e.get('status')}:{len(e.get('communication_log') or [])}" for e in (engagement_activity or [])
+    )
+    raw = f"{roadmap_sig}||{apps_sig}||{saved_sig}||{engagement_sig}"
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
  
  
@@ -195,6 +219,7 @@ def get_or_analyze_strategic_position(
     roadmap_milestones: list[dict],
     applications: list[dict],
     saved_listings: list[dict],
+    engagement_activity: list[dict] | None = None,
 ) -> dict:
     """Checks the real cache before ever making a real, billed API
     call - without this, a person opening the overview page twice in
@@ -209,7 +234,7 @@ def get_or_analyze_strategic_position(
     from app.models.db_models import StrategicPositionCache, StrategicPositionHistory
     from datetime import datetime
  
-    signature = _compute_input_signature(roadmap_milestones, applications, saved_listings)
+    signature = _compute_input_signature(roadmap_milestones, applications, saved_listings, engagement_activity)
     cached = db.query(StrategicPositionCache).filter(StrategicPositionCache.user_id == user_id).first()
     if cached and cached.input_signature == signature:
         return {**cached.result, "cached": True}
@@ -223,7 +248,8 @@ def get_or_analyze_strategic_position(
     previous_analysis = previous_entry.result if previous_entry else None
  
     fresh = analyze_strategic_position(
-        anthropic_client, profile, roadmap_milestones, applications, saved_listings, previous_analysis=previous_analysis
+        anthropic_client, profile, roadmap_milestones, applications, saved_listings,
+        previous_analysis=previous_analysis, engagement_activity=engagement_activity,
     )
  
     if cached:
