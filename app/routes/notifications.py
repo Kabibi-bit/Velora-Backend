@@ -27,12 +27,25 @@ def create_notification(payload: NotificationIn, db: Session = Depends(get_db)):
     the correct, efficient choice for internal server-side code. This
     endpoint exists for anything that genuinely needs to create a
     notification over HTTP instead.
+ 
+    Checks the person's real, stated notification preferences before
+    creating anything - the concrete answer to a documented complaint
+    about receiving outreach a person never opted into. A type not
+    yet listed in an older, stored preferences object still defaults
+    to enabled, so this is opt-out, never opt-in-by-default.
     """
     import uuid as uuid_module
     try:
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
+    from app.models.db_models import Profile
+    profile = db.query(Profile).filter(Profile.user_id == payload.user_id, Profile.is_current == True).first()  # noqa: E712
+    prefs = (profile.notification_preferences if profile else None) or {}
+    if prefs.get(payload.type, True) is False:
+        return {"status": "skipped - muted by user preference"}
+ 
     note = Notification(user_id=payload.user_id, type=payload.type, title=payload.title, detail=payload.detail)
     db.add(note)
     db.commit()
@@ -110,4 +123,35 @@ def clear_notifications(user_id: str, db: Session = Depends(get_db)):
     deleted = db.query(Notification).filter(Notification.user_id == user_id).delete()
     db.commit()
     return {"status": "cleared", "deleted_count": deleted}
+ 
+ 
+class NotificationPreferencesIn(BaseModel):
+    preferences: dict[str, bool]
+ 
+ 
+@router.patch("/{user_id}/preferences")
+def update_notification_preferences(user_id: str, body: NotificationPreferencesIn, db: Session = Depends(get_db)):
+    """Lets a person mute specific notification types - the concrete
+    fix for a documented complaint about receiving outreach a person
+    never opted into. Merges into whatever's already stored rather
+    than replacing it wholesale, so muting one type doesn't silently
+    reset every other, real preference the person already set.
+    """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
+    from app.models.db_models import Profile
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+ 
+    current = dict(profile.notification_preferences or {})
+    current.update(body.preferences)
+    profile.notification_preferences = current
+    db.commit()
+    db.refresh(profile)
+    return {"preferences": profile.notification_preferences}
  
