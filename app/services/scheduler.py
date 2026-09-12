@@ -54,6 +54,7 @@ def _profile_to_dict(p: Profile) -> dict:
         "priorities": p.priorities or [],
         "target_types": p.target_types or [],
         "location_pref": p.location_pref or "",
+        "stage": p.stage or "",
         "embedding": generate_embedding(goal_text, input_type="query"),
     }
  
@@ -69,6 +70,9 @@ def _listing_to_dict(l: Listing) -> dict:
         "deadline": l.deadline.isoformat() if l.deadline else None,
         "description": l.description or "",
         "embedding": list(l.embedding) if l.embedding is not None else None,
+        "salary_min": l.salary_min,
+        "salary_max": l.salary_max,
+        "salary_is_predicted": l.salary_is_predicted,
     }
  
  
