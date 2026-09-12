@@ -519,3 +519,85 @@ def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = D
         headers={"Content-Disposition": f"attachment; filename={safe_org}_resume.docx"},
     )
  
+ 
+@router.get("/{user_id}/cover-letter/{listing_id}")
+def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+    """A real cover letter for one specific listing, grounded only in
+    the person's own real entries and stated goal - the concrete
+    answer to a documented, verified competitor failure where their
+    generator invented a fake personal connection to a company's
+    markets/locations. See app/services/cover_letter.py for the full
+    reasoning and the anti-fabrication discipline this follows.
+    """
+    from app.services.cover_letter import generate_cover_letter
+    from app.models.db_models import Listing
+    import uuid as uuid_module
+ 
+    try:
+        uuid_module.UUID(user_id)
+        uuid_module.UUID(listing_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    entries = db.query(ResumeEntry).filter(ResumeEntry.user_id == user_id).all()
+    if not entries:
+        raise HTTPException(status_code=400, detail="Add at least one real work, education, or project entry before generating a cover letter.")
+ 
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    profile = db.query(Profile).filter(Profile.user_id == user_id, Profile.is_current == True).first()  # noqa: E712
+    profile_dict = {"northstar": profile.northstar if profile else "", "skills": profile.skills if profile else ""}
+    entry_dicts = [{"title": e.title, "org": e.org, "raw_description": e.raw_description} for e in entries]
+    listing_dict = {"title": listing.title, "org": listing.org, "tags": listing.tags or [], "description": listing.description or ""}
+ 
+    result = generate_cover_letter(client, profile_dict, entry_dicts, listing_dict)
+    return result
+ 
+ 
+class UpdateBulletIn(BaseModel):
+    entry_id: str
+    bullet_index: int
+    new_text: str
+ 
+ 
+@router.patch("/{user_id}/bullet")
+def update_resume_bullet(user_id: str, body: UpdateBulletIn, db: Session = Depends(get_db)):
+    """Lets a person directly edit one bullet in their already-
+    generated resume - the concrete backend answer to a documented
+    complaint that users wish they could edit an AI-tailored resume
+    directly, rather than only being able to regenerate the whole
+    thing. Re-checks which flagged numbers are still genuinely
+    present across ALL bullets in this entry after the edit - editing
+    away the one number that was flagged clears that warning, but a
+    different, still-present flagged number in another bullet
+    correctly keeps its own warning, mirroring the frontend's
+    identical logic exactly.
+    """
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No generated resume found")
+ 
+    doc = db.query(ResumeDocument).filter(ResumeDocument.user_id == user_id).first()
+    if not doc or not doc.polished_entries:
+        raise HTTPException(status_code=404, detail="No generated resume found")
+ 
+    entries = list(doc.polished_entries)
+    entry = next((e for e in entries if e.get("entry_id") == body.entry_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Resume entry not found")
+    if body.bullet_index < 0 or body.bullet_index >= len(entry.get("bullets", [])):
+        raise HTTPException(status_code=400, detail="bullet_index is out of range for this entry")
+ 
+    entry["bullets"][body.bullet_index] = body.new_text
+    if entry.get("flagged_numbers"):
+        entry["flagged_numbers"] = [n for n in entry["flagged_numbers"] if any(n in b for b in entry["bullets"])]
+ 
+    doc.polished_entries = entries
+    db.commit()
+    db.refresh(doc)
+    return {"entry_id": body.entry_id, "bullets": entry["bullets"], "flagged_numbers": entry.get("flagged_numbers", [])}
+ 
