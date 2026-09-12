@@ -68,6 +68,9 @@ class Listing(Base):
     deadline = Column(Date)
     apply_url = Column(String, nullable=False)
     fetched_at = Column(DateTime, default=datetime.utcnow)
+    salary_min = Column(Integer, nullable=True)
+    salary_max = Column(Integer, nullable=True)
+    salary_is_predicted = Column(Boolean, nullable=True)  # None means genuinely no salary data at all - absent is honestly different from a real, disclosed 0
     embedding = Column(Vector(512), nullable=True)  # None until embedded - see app/services/embeddings.py
  
  
