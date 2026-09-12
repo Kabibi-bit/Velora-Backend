@@ -141,6 +141,27 @@ def _has_dealbreaker(tags: list[str], dealbreakers: str) -> bool:
     return False
  
  
+def _is_listing_expired(listing: dict) -> bool:
+    """A real, hard exclusion - not just a scoring factor. Without
+    this, a genuinely excellent skill/goal match with an already-
+    passed deadline could still clear the presentable score
+    threshold on every other real factor, showing someone a
+    confident "great match" for a job that's already closed. A
+    listing with no deadline stated at all is never treated as
+    expired - "no deadline given" and "already passed" are genuinely
+    different things.
+    """
+    if not listing.get("deadline"):
+        return False
+    try:
+        deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
+        if not isinstance(deadline_date, date):
+            return False
+    except (ValueError, TypeError):
+        return False
+    return deadline_date < date.today()
+ 
+ 
 def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
     """Returns (score_contribution, days_left). A deadline that's
     close but not unrealistically close gets a small real boost -
@@ -820,6 +841,8 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
             continue
         if str(listing["id"]) in dismissed_ids:
             continue
+        if _is_listing_expired(listing):
+            continue
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
             continue
@@ -862,6 +885,8 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
         if listing["type"] not in profile.get("target_types", []):
             continue
         if str(listing["id"]) in dismissed_ids:
+            continue
+        if _is_listing_expired(listing):
             continue
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
