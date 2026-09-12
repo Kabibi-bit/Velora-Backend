@@ -799,18 +799,26 @@ def audit_personalization_effect(applications_with_outcomes: list[dict]) -> dict
     }
  
  
-def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> list[dict]:
+def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None, dismissed_ids: set | None = None) -> list[dict]:
     """Same quality gate as rank_listings_with_near_misses - never
     pads results with mediocre listings just to hit top_n. This
     matters here as much as the browse view: auto-apply calls this
     to decide what to send applications to, and it should never
     "auto-apply" to something that barely cleared the scoring floor
     just because the count needed filling.
+ 
+    dismissed_ids excludes listings the person has genuinely, already
+    said they're not interested in - the concrete backend answer to
+    a documented weakness where a competing tool keeps relisting jobs
+    a person already explicitly rejected.
     """
     tag_weights = tag_weights or {}
+    dismissed_ids = dismissed_ids or set()
     scored = []
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
+            continue
+        if str(listing["id"]) in dismissed_ids:
             continue
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
@@ -825,7 +833,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
  
  
  
-def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> tuple[list[dict], list[dict]]:
+def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: int = 10, near_miss_n: int = 5, tag_weights: dict | None = None, factor_weights: dict | None = None, roadmap_milestones: list | None = None, dismissed_ids: set | None = None) -> tuple[list[dict], list[dict]]:
     """The 'why not' transparency feature - most job boards silently
     drop everything below the cutoff. This surfaces the next several
     listings just below it, with the SAME real, grounded rationale
@@ -841,11 +849,19 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     direction. A cycle with only 2 genuinely good matches returns 2,
     not 10 padded down to fill the count. See PRESENTABLE_MIN_SCORE /
     PRESENTABLE_MIN_SIGNAL for the actual bar.
+ 
+    dismissed_ids excludes genuinely dismissed listings from both
+    matches AND near-misses - a person who said "not interested"
+    shouldn't see that exact listing again even framed as "why this
+    one didn't make the cut."
     """
     tag_weights = tag_weights or {}
+    dismissed_ids = dismissed_ids or set()
     scored = []
     for listing in listings:
         if listing["type"] not in profile.get("target_types", []):
+            continue
+        if str(listing["id"]) in dismissed_ids:
             continue
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
