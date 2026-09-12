@@ -324,10 +324,13 @@ def run_scan_for_user(db: Session, user_id: str) -> dict:
         return {"status": "no active profile", "user_id": user_id}
  
     listings = db.query(Listing).all()
+    from app.models.db_models import DismissedListing
+    dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user_id).all()}
     ranked = rank_listings(
         [_listing_to_dict(l) for l in listings],
         _profile_to_dict(profile),
         top_n=10,
+        dismissed_ids=dismissed_ids,
     )
  
     # Determine this user's next scan_cycle number
@@ -429,7 +432,9 @@ def run_scan_for_all_users():
                 )
                 if profile and profile.auto_apply_enabled:
                     listings = db.query(Listing).all()
-                    ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
+                    from app.models.db_models import DismissedListing
+                    dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user.id).all()}
+                    ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10, dismissed_ids=dismissed_ids)
                     auto_count = 0
                     outreach_count = 0
                     for listing in ranked:
