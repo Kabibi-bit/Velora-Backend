@@ -83,8 +83,18 @@ def get_strategic_position(user_id: str, db: Session = Depends(get_db)):
     )
     saved_list = [{"title": l.title, "org": l.org} for _, l in saved_rows]
  
+    from app.models.db_models import EngagementSuggestion
+    engagement_rows = db.query(EngagementSuggestion).filter(EngagementSuggestion.user_id == user_id).all()
+    engagement_list = [
+        {"status": e.status, "poster_context": e.poster_context, "communication_log": e.communication_log or []}
+        for e in engagement_rows
+    ]
+ 
     try:
-        return get_or_analyze_strategic_position(db, client, user_id, profile_dict, milestones_list, applications_list, saved_list)
+        return get_or_analyze_strategic_position(
+            db, client, user_id, profile_dict, milestones_list, applications_list, saved_list,
+            engagement_activity=engagement_list,
+        )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
  
