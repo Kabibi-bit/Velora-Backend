@@ -162,6 +162,33 @@ def _is_listing_expired(listing: dict) -> bool:
     return deadline_date < date.today()
  
  
+def _detect_seniority_mismatch(listing: dict, profile: dict) -> Optional[dict]:
+    """Mirrors the frontend's detectSeniorityMismatch exactly: only
+    ever flags a CLEAR, unambiguous seniority gap between a listing's
+    title and the person's real stated stage, never a guess. The
+    concrete answer to a documented competitor weakness where a
+    keyword-strong but genuinely overqualified/underqualified role
+    still scored high with no honest flag distinguishing it from a
+    true fit.
+    """
+    import re as _re
+    title = (listing.get("title") or "").lower()
+    stage = profile.get("stage") or ""
+    senior_markers = _re.compile(r"\b(senior|sr\.?|staff|principal|lead|director|head of|vp|vice president|chief|manager|executive)\b")
+    junior_markers = _re.compile(r"\b(intern|internship|junior|jr\.?|entry[- ]?level|trainee|apprentice|assistant|fellow|graduate|new grad)\b")
+    is_senior = bool(senior_markers.search(title))
+    is_junior = bool(junior_markers.search(title))
+    if is_senior and is_junior:
+        return None  # genuinely ambiguous title - honestly flag nothing
+    early_career = stage in ("student", "grad")
+    established_career = stage == "working"
+    if early_career and is_senior:
+        return {"direction": "above", "note": "This role's title suggests a seniority level well above where you said you are - it may be a reach, and worth weighing against roles closer to your current stage."}
+    if established_career and is_junior:
+        return {"direction": "below", "note": "This role's title suggests a level below your stated experience - you may be seen as overqualified, which is worth weighing before spending an application on it."}
+    return None
+ 
+ 
 def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
     """Returns (score_contribution, days_left). A deadline that's
     close but not unrealistically close gets a small real boost -
@@ -487,6 +514,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
         "factors_engaged": factors_engaged,
         "personalized": bool(factor_weights),
         "data_quality": assess_listing_data_quality(listing),
+        "seniority_mismatch": _detect_seniority_mismatch(listing, profile),
         "factors": {
             "goal_fit": round(goal_fit, 2),
             "skill_fit": round(skill_fit, 2),
