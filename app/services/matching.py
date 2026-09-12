@@ -162,6 +162,48 @@ def _is_listing_expired(listing: dict) -> bool:
     return deadline_date < date.today()
  
  
+LISTING_STALE_DAYS = 30  # aggregated boards routinely leave filled roles up for weeks; past ~a month un-re-seen, verification is genuinely worth flagging
+ 
+ 
+def _get_listing_staleness_note(listing: dict, now: "datetime | None" = None) -> Optional[dict]:
+    """The honest answer to the documented ghost-job problem: an
+    aggregated listing Velora hasn't re-seen in a long time is more
+    likely to be already filled or stale. Crucially SOFT, not a hard
+    exclusion like _is_listing_expired - staleness is genuinely
+    uncertain (the role might still be open), so this cautions rather
+    than removes, and says exactly what it does and doesn't know.
+    Pairs with the standard, real advice to verify on the company's
+    own careers page before applying. Returns None when there's no
+    fetched_at to judge, or when the listing is genuinely recent -
+    never fabricates a concern from absent data.
+    """
+    from datetime import datetime as _dt, timezone
+    fetched = listing.get("fetched_at")
+    if not fetched:
+        return None
+    try:
+        if isinstance(fetched, str):
+            fetched_dt = _dt.fromisoformat(fetched)
+        elif isinstance(fetched, _dt):
+            fetched_dt = fetched
+        else:
+            return None
+    except (ValueError, TypeError):
+        return None
+    current = now or _dt.utcnow()
+    if fetched_dt.tzinfo is not None:
+        fetched_dt = fetched_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    days = (current - fetched_dt).days
+    if days < LISTING_STALE_DAYS:
+        return None
+    return {
+        "days_since_seen": days,
+        "note": f"Velora last saw this posting {days} days ago - aggregated listings can be filled or removed without the board updating, so it's worth confirming it's still open on the company's own careers page before applying.",
+    }
+ 
+ 
 def _detect_seniority_mismatch(listing: dict, profile: dict) -> Optional[dict]:
     """Mirrors the frontend's detectSeniorityMismatch exactly: only
     ever flags a CLEAR, unambiguous seniority gap between a listing's
@@ -541,6 +583,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
         "data_quality": assess_listing_data_quality(listing),
         "seniority_mismatch": _detect_seniority_mismatch(listing, profile),
         "location_mismatch": _detect_location_mismatch(listing, profile),
+        "staleness_note": _get_listing_staleness_note(listing),
         "factors": {
             "goal_fit": round(goal_fit, 2),
             "skill_fit": round(skill_fit, 2),
