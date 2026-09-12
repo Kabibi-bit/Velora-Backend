@@ -54,9 +54,13 @@ def guess_contact_emails(org_name: str) -> dict:
     }
  
  
-def send_email(to_address: str, subject: str, body: str) -> dict:
+def send_email(to_address: str, subject: str, body: str, html_body: str | None = None) -> dict:
     """Actually sends an email via Resend. Raises a clear error if
     RESEND_API_KEY isn't configured, rather than silently no-op'ing.
+    html_body is optional - every existing caller keeps working
+    exactly as before with plain text only; passing it adds a real,
+    properly-formatted HTML version alongside the text one, which
+    Resend's own API already supports in the same request.
     """
     if not RESEND_API_KEY:
         raise RuntimeError(
@@ -69,6 +73,8 @@ def send_email(to_address: str, subject: str, body: str) -> dict:
         "subject": subject,
         "text": body,
     }
+    if html_body:
+        payload["html"] = html_body
     headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
     resp = httpx.post(RESEND_API_URL, json=payload, headers=headers, timeout=15)
     resp.raise_for_status()
