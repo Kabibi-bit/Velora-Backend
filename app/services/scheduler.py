@@ -460,12 +460,13 @@ def run_scan_for_all_users():
                     # a genuine notification-write failure can never
                     # retroactively undo the real scan work above it.
                     try:
-                        if auto_count > 0:
+                        auto_apply_muted = ((profile.notification_preferences or {}) if profile else {}).get("auto_apply", True) is False
+                        if auto_count > 0 and not auto_apply_muted:
                             db.add(Notification(
                                 user_id=user.id, type="auto_apply",
                                 title=f"Auto Apply: {auto_count} new application{'s' if auto_count != 1 else ''} auto-approved",
                             ))
-                        if outreach_count > 0:
+                        if outreach_count > 0 and not auto_apply_muted:
                             db.add(Notification(
                                 user_id=user.id, type="auto_apply",
                                 title=f"Auto Apply: {outreach_count} outreach email{'s' if outreach_count != 1 else ''} drafted",
@@ -511,7 +512,13 @@ def run_scan_for_all_users():
                 # grouping by each application's real, individual
                 # owner and notifying each affected user with their
                 # own genuine count is the only correct approach here.
+                from app.models.db_models import Profile
+                affected_user_ids = list(sent_counts_by_user.keys())
+                profiles = db.query(Profile).filter(Profile.user_id.in_(affected_user_ids), Profile.is_current == True).all()  # noqa: E712
+                prefs_by_user = {p.user_id: (p.notification_preferences or {}) for p in profiles}
                 for uid, count in sent_counts_by_user.items():
+                    if prefs_by_user.get(uid, {}).get("auto_apply", True) is False:
+                        continue
                     db.add(Notification(
                         user_id=uid, type="auto_apply",
                         title=f"Auto-send: {count} approved application{'s' if count != 1 else ''} past your undo window, now sent",
