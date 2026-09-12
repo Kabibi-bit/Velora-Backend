@@ -278,9 +278,68 @@ def explain_outcome(application_id: str, db: Session = Depends(get_db)):
     listing_dict = {"title": listing.title, "org": listing.org, "tags": listing.tags or []}
     profile_dict = {"northstar": profile.northstar, "skills": profile.skills or ""}
  
-    explanation = explain_outcome_deep(
-        client, listing_dict, app_record.draft_content,
-        float(app_record.confidence_pct or 0), outcome.status, profile_dict,
-    )
+    try:
+        explanation = explain_outcome_deep(
+            client, listing_dict, app_record.draft_content,
+            float(app_record.confidence_pct or 0), outcome.status, profile_dict,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not generate this explanation just now: {e}")
     return {"application_id": application_id, "outcome_status": outcome.status, "explanation": explanation}
+ 
+ 
+SAME_COMPANY_CAUTION_THRESHOLD = 3
+ 
+ 
+@router.get("/{user_id}/company-concentration")
+def get_company_concentration(user_id: str, db: Session = Depends(get_db)):
+    """Surfaces companies the person has applied to enough times that a
+    further application starts reading as spray-pattern in an ATS -
+    the concrete answer to the documented etiquette line (~2-3
+    relevant roles per company is normal; more looks unfocused).
+    Counts only genuinely ACTIVE applications (a discarded/undone one
+    was never actually sent, so it doesn't count against the line),
+    grouped by a normalized org name so trivial formatting
+    differences don't split or miss a real repeat. Never blocks
+    anything - it's honest awareness the person can act on.
+    """
+    import uuid as uuid_module
+    import re
+    from app.models.db_models import Listing
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
+    rows = (
+        db.query(Application, Listing)
+        .join(Listing, Application.listing_id == Listing.id)
+        .filter(Application.user_id == user_id, Application.status != "undone")
+        .all()
+    )
+ 
+    def norm(s):
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+ 
+    # Group active applications by normalized org, keeping a real
+    # display name (the first genuinely-seen spelling) for each.
+    by_company = {}
+    for app, listing in rows:
+        key = norm(listing.org)
+        if not key:
+            continue
+        if key not in by_company:
+            by_company[key] = {"org": listing.org, "count": 0}
+        by_company[key]["count"] += 1
+ 
+    cautions = [
+        {
+            "org": info["org"],
+            "count": info["count"],
+            "note": f"You already have {info['count']} active applications to {info['org']}. Applying to several roles at one company can read as unfocused in their applicant system - it's often stronger to concentrate on the single best fit here.",
+        }
+        for info in by_company.values()
+        if info["count"] >= SAME_COMPANY_CAUTION_THRESHOLD
+    ]
+    return {"cautions": cautions}
  
