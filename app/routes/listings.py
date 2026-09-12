@@ -173,7 +173,9 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
     if profile and profile.auto_apply_enabled:
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         listings = db.query(Listing).all()
-        ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10)
+        from app.models.db_models import DismissedListing
+        dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user_id).all()}
+        ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10, dismissed_ids=dismissed_ids)
         for listing in ranked:
             outcome = create_application_for_match(db, client, user_id, listing["id"], auto_generated=True)
             if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
