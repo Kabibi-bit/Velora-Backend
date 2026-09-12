@@ -73,6 +73,7 @@ def _listing_to_dict(l: Listing) -> dict:
         "salary_min": l.salary_min,
         "salary_max": l.salary_max,
         "salary_is_predicted": l.salary_is_predicted,
+        "fetched_at": l.fetched_at.isoformat() if l.fetched_at else None,
     }
  
  
