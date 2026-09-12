@@ -333,3 +333,60 @@ def get_reminders(user_id: str, db: Session = Depends(get_db)):
  
     return {"interview_followups": interview_followups, "stale_applications": stale_applications}
  
+ 
+SEARCH_STRAIN_MIN_SENT = 15
+SEARCH_STRAIN_MIN_DAYS = 21
+ 
+ 
+@router.get("/{user_id}/search-strain")
+def get_search_strain(user_id: str, db: Session = Depends(get_db)):
+    """The honest, human answer to the documented burnout dimension:
+    a long, high-volume search with no positive traction quietly
+    erodes confidence, and a tool that just says 'apply to more'
+    makes it worse. This reflects a genuine pattern in the person's
+    OWN logged data - never cheerleading, never manufactured concern.
+    Only fires with real volume (SEARCH_STRAIN_MIN_SENT genuinely
+    sent), over a real span (SEARCH_STRAIN_MIN_DAYS), with ZERO
+    positive outcomes. A single interview or offer anywhere means the
+    approach is working somewhere - no strain flag. Mirrors the
+    frontend's detectSearchStrainPattern exactly.
+    """
+    import uuid as uuid_module
+    from datetime import datetime
+    from app.models.db_models import Application
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+ 
+    now = datetime.utcnow()
+    sent = (
+        db.query(Application)
+        .filter(Application.user_id == user_id, Application.status == "sent", Application.sent_at.isnot(None))
+        .all()
+    )
+    if len(sent) < SEARCH_STRAIN_MIN_SENT:
+        return {"strain": None}
+ 
+    # Any positive outcome anywhere means it's working - no strain.
+    positive_exists = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == user_id, Outcome.status.in_(["interview", "offer"]))
+        .first()
+    )
+    if positive_exists:
+        return {"strain": None}
+ 
+    oldest = min(a.sent_at for a in sent)
+    span_days = (now - oldest).days
+    if span_days < SEARCH_STRAIN_MIN_DAYS:
+        return {"strain": None}
+ 
+    return {
+        "strain": {
+            "sent_count": len(sent),
+            "span_days": span_days,
+            "note": f"You've sent {len(sent)} applications over about {span_days} days without an interview or offer logged yet. That's genuinely draining, and it usually reflects the approach more than you - it can be worth pausing volume to concentrate on a few highest-fit roles, tightening how your experience is framed for them, or leaning on a referral, rather than sending more of the same.",
+        }
+    }
+ 
