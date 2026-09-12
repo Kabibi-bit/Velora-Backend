@@ -121,6 +121,17 @@ def normalize_adzuna(raw: dict) -> dict:
         # should always provide an id, but defended regardless.
         fallback_source = f"{raw.get('title', '')}|{raw.get('redirect_url', '')}"
         external_id = "hash_" + hashlib.sha256(fallback_source.encode()).hexdigest()[:16]
+    salary_min = raw.get("salary_min")
+    salary_max = raw.get("salary_max")
+    raw_is_predicted = raw.get("salary_is_predicted")
+    try:
+        salary_min = int(salary_min) if salary_min is not None else None
+        salary_max = int(salary_max) if salary_max is not None else None
+        salary_is_predicted = bool(int(raw_is_predicted)) if raw_is_predicted is not None else None
+    except (ValueError, TypeError):
+        salary_min = None
+        salary_max = None
+        salary_is_predicted = None
     return {
         "source": "adzuna",
         "external_id": external_id,
@@ -132,6 +143,9 @@ def normalize_adzuna(raw: dict) -> dict:
         "apply_url": raw.get("redirect_url"),
         "tags": [],  # populate via extract_tags()
         "deadline": None,  # Adzuna doesn't provide deadlines
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "salary_is_predicted": salary_is_predicted,
     }
  
  
