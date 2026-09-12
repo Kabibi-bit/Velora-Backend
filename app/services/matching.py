@@ -220,6 +220,31 @@ def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
     return 0.0, days_left
  
  
+def _detect_location_mismatch(listing: dict, profile: dict) -> Optional[dict]:
+    """Mirrors the frontend's detectLocationMismatch exactly: only
+    flags a CLEAR onsite/relocation gap - an onsite (non-remote)
+    listing in a location that doesn't match the person's stated
+    city, when they haven't signaled remote. The concrete answer to
+    the documented 'remote does not mean anywhere / HR mislabels
+    location' problem - surfaces the relocation reality rather than
+    letting a keyword-strong score hide it.
+    """
+    listing_loc = (listing.get("location") or "").lower().strip()
+    location_pref = (profile.get("location_pref") or "").lower().strip()
+    if not listing_loc or not location_pref:
+        return None
+    if "remote" in listing_loc:
+        return None
+    if "remote" in location_pref:
+        return None
+    pref_tokens = [t for t in tokenize(location_pref) if len(t) > 3]
+    if not pref_tokens:
+        return None
+    if any(t in listing_loc for t in pref_tokens):
+        return None
+    return {"note": f"This role is based in {listing.get('location')}, which doesn't match your stated location ({profile.get('location_pref')}) and isn't remote - it would likely require relocating, worth weighing before applying."}
+ 
+ 
 def _location_fit_factor(listing: dict, profile: dict) -> tuple[float, str | None]:
     """Returns (score_contribution, reason). Mirrors what the
     explanation already claimed to consider - remote-preference match,
@@ -515,6 +540,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
         "personalized": bool(factor_weights),
         "data_quality": assess_listing_data_quality(listing),
         "seniority_mismatch": _detect_seniority_mismatch(listing, profile),
+        "location_mismatch": _detect_location_mismatch(listing, profile),
         "factors": {
             "goal_fit": round(goal_fit, 2),
             "skill_fit": round(skill_fit, 2),
