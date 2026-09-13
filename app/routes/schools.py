@@ -15,6 +15,8 @@ from app.services.schools import (
     admissions_readiness,
     admissions_list_balance,
     admissions_gap_radar,
+    build_readiness_snapshot,
+    compute_trajectory,
 )
  
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -173,4 +175,63 @@ def schools_gap_radar(user_id: str, db: Session = Depends(get_db), _auth: dict =
     if result is None:
         raise HTTPException(status_code=404, detail="No target schools we have data on are set on this profile")
     return result
+ 
+ 
+ 
+def _snapshot_signals(user_id: str, db: Session) -> dict:
+    signals = {}
+    try:
+        from app.models.db_models import Application
+        signals["tracked_count"] = db.query(Application).filter(Application.user_id == user_id).count()
+    except Exception:
+        pass
+    return signals
+ 
+ 
+@router.post("/snapshot/{user_id}")
+def schools_snapshot(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """Record a timestamped readiness snapshot for the student's trajectory -
+    but only if >12h since the last one OR their evidence actually changed, so
+    the series reflects real progress, not repeated loads. This persistence is
+    what makes the trajectory feature possible."""
+    from datetime import datetime, timezone
+    from app.models.db_models import AdmissionsSnapshot
+    profile = _load_student_profile(user_id, db)
+    snap = build_readiness_snapshot(profile, _snapshot_signals(user_id, db))
+    if snap is None:
+        raise HTTPException(status_code=404, detail="No target schools we have data on are set on this profile")
+ 
+    last = (
+        db.query(AdmissionsSnapshot)
+        .filter(AdmissionsSnapshot.user_id == user_id)
+        .order_by(AdmissionsSnapshot.created_at.desc())
+        .first()
+    )
+    should_write = True
+    if last is not None:
+        ev_changed = (last.evidence or {}) != snap["evidence"]
+        age_h = (datetime.now(timezone.utc) - (last.created_at.replace(tzinfo=timezone.utc) if last.created_at.tzinfo is None else last.created_at)).total_seconds() / 3600
+        should_write = ev_changed or age_h > 12
+    if should_write:
+        row = AdmissionsSnapshot(user_id=user_id, avg=snap["avg"], per_school=snap["per_school"], evidence=snap["evidence"])
+        db.add(row)
+        db.commit()
+    return {"recorded": should_write, "avg": snap["avg"]}
+ 
+ 
+@router.get("/trajectory/{user_id}")
+def schools_trajectory(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """THE UNIQUE ONE: the student's readiness trajectory over real time -
+    momentum, what moved the needle, and pace vs runway. Something no stateless
+    chatbot and no single meeting can produce. Reads persisted snapshots."""
+    from app.models.db_models import AdmissionsSnapshot
+    profile = _load_student_profile(user_id, db)
+    rows = (
+        db.query(AdmissionsSnapshot)
+        .filter(AdmissionsSnapshot.user_id == user_id)
+        .order_by(AdmissionsSnapshot.created_at.asc())
+        .all()
+    )
+    snaps = [{"created_at": r.created_at, "avg": r.avg, "evidence": r.evidence or {}} for r in rows]
+    return compute_trajectory(snaps, profile)
  
