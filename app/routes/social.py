@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
 import anthropic
@@ -123,8 +123,8 @@ def delete_post(post_id: str, db: Session = Depends(get_db), authorization: str 
  
  
 class ReflectIn(BaseModel):
-    focus: str
-    context_summary: str | None = None
+    focus: str = Field(max_length=500)
+    context_summary: str | None = Field(default=None, max_length=4000)
  
  
 @router.post("/posts/{post_id}/reflect")
@@ -152,8 +152,8 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
  
  
 class ReflectPatternIn(BaseModel):
-    focus: str
-    context_summary: str | None = None
+    focus: str = Field(max_length=500)
+    context_summary: str | None = Field(default=None, max_length=4000)
     limit: int = 5
  
  
