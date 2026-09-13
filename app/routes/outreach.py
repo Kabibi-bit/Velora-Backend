@@ -172,7 +172,7 @@ def list_outreach(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
 class EditOutreachIn(BaseModel):
     subject: str | None = Field(default=None, max_length=500)
     body: str | None = Field(default=None, max_length=10000)
-    to_address: str | None = None
+    to_address: str | None = Field(default=None, max_length=300)
  
  
 @router.patch("/{outreach_id}")
