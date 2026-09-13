@@ -199,6 +199,49 @@ def normalize_athletic_job(raw: dict) -> dict:
     return normalized
  
  
+ADMISSIONS_OPPORTUNITY_QUERIES = [
+    "high school internship",
+    "student research program",
+    "summer research internship",
+    "pre college program",
+    "student volunteer program",
+    "youth leadership program",
+]
+ 
+ 
+async def fetch_admissions_opportunities(location: str = "us", max_queries: int | None = None) -> list[dict]:
+    """Pulls real, student-accessible opportunities from Adzuna
+    (internships, research programs, pre-college and volunteer
+    programs) using admissions-relevant terms. This is the honest
+    alternative to a dedicated competitions/extracurriculars API -
+    real data queried with student-focused terms, not mocked, exactly
+    mirroring fetch_athletic_career_jobs.
+ 
+    max_queries caps how many of ADMISSIONS_OPPORTUNITY_QUERIES get
+    called - None (the default) runs all of them; a caller sharing a
+    limited daily call budget passes a specific number.
+    """
+    queries = ADMISSIONS_OPPORTUNITY_QUERIES if max_queries is None else ADMISSIONS_OPPORTUNITY_QUERIES[:max_queries]
+    all_results = []
+    for query in queries:
+        try:
+            results = await fetch_adzuna(query, location=location)
+            all_results.extend(results)
+        except Exception:
+            continue  # one query failing shouldn't block the others
+    return all_results
+ 
+ 
+def normalize_admissions_opportunity(raw: dict) -> dict:
+    """Same shape as normalize_adzuna, but tagged as 'admissions' so it
+    surfaces correctly in the Admissions dashboard and its matching
+    engine, mirroring normalize_athletic_job.
+    """
+    normalized = normalize_adzuna(raw)
+    normalized["type"] = "admissions"
+    return normalized
+ 
+ 
 def dedupe_listings(listings: list[dict]) -> list[dict]:
     seen = set()
     out = []
@@ -230,7 +273,12 @@ async def extract_tags(description: str, anthropic_client) -> list[str]:
             }],
         )
         text = "".join(b.text for b in resp.content if b.type == "text")
-        return [t.strip() for t in text.split(",") if t.strip()]
+        # Force lowercase: the prompt asks for it, but LLMs don't
+        # reliably obey formatting instructions, and the matcher's
+        # tag comparison is case-sensitive - a stray capitalized tag
+        # ("Python") silently scores far lower than "python". Normalize
+        # here so every downstream consumer gets clean, lowercase tags.
+        return [t.strip().lower() for t in text.split(",") if t.strip()]
     except Exception:
         # Both current, real callers (scheduler.py) already wrap this
         # in their own try/except with this same, honest empty-list
