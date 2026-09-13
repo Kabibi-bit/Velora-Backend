@@ -12,7 +12,7 @@ import hashlib
  
 from fastapi import APIRouter, HTTPException, Depends
 from app.services.auth import require_valid_token
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from datetime import date
  
@@ -23,11 +23,11 @@ router = APIRouter(prefix="/listings/manual", tags=["listings"])
  
  
 class ManualListingIn(BaseModel):
-    title: str
-    org: str
+    title: str = Field(max_length=300)
+    org: str = Field(max_length=300)
     type: str  # "college" or "internship" typically, for this route
     location: str | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=10000)
     tags: list[str] = []
     deadline: date | None = None
     apply_url: str
