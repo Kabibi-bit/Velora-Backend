@@ -62,6 +62,19 @@ def send_email(to_address: str, subject: str, body: str, html_body: str | None =
     properly-formatted HTML version alongside the text one, which
     Resend's own API already supports in the same request.
     """
+    # Recipient sanity check, centralized here so every send path is
+    # covered at once. Blocks a missing/blank address, control
+    # characters (newline/carriage-return header-injection attempts),
+    # and comma/semicolon-separated multi-address "blasts" - none of
+    # which a legitimate single-recipient outreach email ever needs.
+    if not to_address or not isinstance(to_address, str):
+        raise ValueError("A recipient email address is required.")
+    to_address = to_address.strip()
+    if any(ch in to_address for ch in ["\n", "\r", ",", ";", " "]):
+        raise ValueError("Recipient address must be a single, valid email address.")
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to_address):
+        raise ValueError("Recipient address is not a valid email address.")
+ 
     if not RESEND_API_KEY:
         raise RuntimeError(
             "RESEND_API_KEY is not set - sign up at resend.com, get an API key, "
