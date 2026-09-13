@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -170,8 +170,8 @@ def list_outreach(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
  
  
 class EditOutreachIn(BaseModel):
-    subject: str | None = None
-    body: str | None = None
+    subject: str | None = Field(default=None, max_length=500)
+    body: str | None = Field(default=None, max_length=10000)
     to_address: str | None = None
  
  
