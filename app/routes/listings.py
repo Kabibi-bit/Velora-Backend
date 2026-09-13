@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.services.auth import require_auth_for_user
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
@@ -387,8 +387,8 @@ def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get
  
 class SendOutreachIn(BaseModel):
     to_address: str
-    subject: str
-    body: str
+    subject: str = Field(max_length=500)
+    body: str = Field(max_length=10000)
     address_verified: bool = False
  
  
