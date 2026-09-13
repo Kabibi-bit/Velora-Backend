@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -18,7 +19,7 @@ class SaveIn(BaseModel):
  
  
 @router.post("")
-def save_listing(payload: SaveIn, db: Session = Depends(get_db)):
+def save_listing(payload: SaveIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Stars a listing - this is what backs the frontend's star icon
     and Saved panel. Starring ALSO automatically drafts a tailored
     application for that match (via create_application_for_match),
@@ -32,6 +33,7 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -65,7 +67,7 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db)):
  
  
 @router.delete("/{user_id}/{listing_id}")
-def unsave_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def unsave_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -85,7 +87,7 @@ def unsave_listing(user_id: str, listing_id: str, db: Session = Depends(get_db))
  
  
 @router.get("/{user_id}")
-def get_saved(user_id: str, db: Session = Depends(get_db)):
+def get_saved(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
