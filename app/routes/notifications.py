@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -17,7 +18,7 @@ class NotificationIn(BaseModel):
  
  
 @router.post("")
-def create_notification(payload: NotificationIn, db: Session = Depends(get_db)):
+def create_notification(payload: NotificationIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Records a real notification - this is what backs the frontend's
     Inbox page, which was previously only in browser localStorage.
     The scan scheduler (scheduler.py) already writes Notification
@@ -39,6 +40,7 @@ def create_notification(payload: NotificationIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
  
     from app.models.db_models import Profile
     profile = db.query(Profile).filter(Profile.user_id == payload.user_id, Profile.is_current == True).first()  # noqa: E712
@@ -54,7 +56,7 @@ def create_notification(payload: NotificationIn, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def get_notifications(user_id: str, db: Session = Depends(get_db)):
+def get_notifications(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -74,7 +76,7 @@ def get_notifications(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/{notification_id}/read")
-def mark_read(notification_id: str, db: Session = Depends(get_db)):
+def mark_read(notification_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(notification_id)
@@ -83,13 +85,16 @@ def mark_read(notification_id: str, db: Session = Depends(get_db)):
     note = db.query(Notification).filter(Notification.id == notification_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Notification not found")
+    # This route only has a notification_id, so verify the token
+    # against the notification's real owner before mutating it.
+    verify_token_belongs_to_user(str(note.user_id), authorization)
     note.is_read = True
     db.commit()
     return {"status": "marked read"}
  
  
 @router.post("/{user_id}/mark-all-read")
-def mark_all_read(user_id: str, db: Session = Depends(get_db)):
+def mark_all_read(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Bulk counterpart to mark_read above - mirrors the frontend's
     own markAllNotificationsRead() exactly. Genuine gap this closes:
     the frontend already offered this action, but the backend only
@@ -110,7 +115,7 @@ def mark_all_read(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.delete("/{user_id}")
-def clear_notifications(user_id: str, db: Session = Depends(get_db)):
+def clear_notifications(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Mirrors the frontend's own clearNotifications() exactly - the
     same genuine gap as mark_all_read above, a real frontend action
     with no backend counterpart until now.
@@ -130,7 +135,7 @@ class NotificationPreferencesIn(BaseModel):
  
  
 @router.patch("/{user_id}/preferences")
-def update_notification_preferences(user_id: str, body: NotificationPreferencesIn, db: Session = Depends(get_db)):
+def update_notification_preferences(user_id: str, body: NotificationPreferencesIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lets a person mute specific notification types - the concrete
     fix for a documented complaint about receiving outreach a person
     never opted into. Merges into whatever's already stored rather
