@@ -26,9 +26,9 @@ class ManualListingIn(BaseModel):
     title: str = Field(max_length=300)
     org: str = Field(max_length=300)
     type: str  # "college" or "internship" typically, for this route
-    location: str | None = None
+    location: str | None = Field(default=None, max_length=300)
     description: str | None = Field(default=None, max_length=10000)
-    tags: list[str] = []
+    tags: list[str] = Field(default=[], max_length=50)
     deadline: date | None = None
     apply_url: str
  
