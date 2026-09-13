@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from app.services.auth import require_valid_token
 from pydantic import BaseModel
 import anthropic
  
@@ -16,7 +17,7 @@ class AssistanceSearchIn(BaseModel):
  
  
 @router.post("/search")
-def search_assistance(payload: AssistanceSearchIn):
+def search_assistance(payload: AssistanceSearchIn, _auth: dict = Depends(require_valid_token)):
     if not payload.need_description.strip():
         raise HTTPException(status_code=400, detail="need_description is required")
     if not payload.budget.strip():
