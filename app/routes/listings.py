@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from app.services.auth import require_auth_for_user
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
  
@@ -50,7 +51,7 @@ def _listing_to_dict(l: Listing) -> dict:
     }
  
 @router.get("/matches/{user_id}")
-def get_matches(user_id: str, db: Session = Depends(get_db)):
+def get_matches(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Returns the current top-ranked listings for a user, scored live
     against whatever's currently in the listings table. Roadmap
     alignment is a real, graded factor baked directly into the score
@@ -146,7 +147,7 @@ def get_matches(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/scan/{user_id}")
-async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
+async def trigger_scan(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Manually triggers an immediate scan: pulls fresh listings from
     Adzuna (if any are new), then re-scores everything for this user.
     If the user has Auto Apply mode enabled, this also automatically
@@ -201,7 +202,7 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/matches/{user_id}/explain/{listing_id}")
-def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """On-demand DEEP explanation of why a listing is a good match -
     a real Claude call producing an actual paragraph grounded in the
     full profile, the listing, and the roadmap if one exists. This is
@@ -283,7 +284,7 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
  
  
 @router.get("/matches/{user_id}/connect/{listing_id}")
-def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Generates a real referral/networking strategy for a specific
     listing - who to look for, how to actually find them, and a
     tailored outreach message. This deliberately does NOT invent a
@@ -361,7 +362,7 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
  
  
 @router.get("/matches/{user_id}/connect/{listing_id}/guess-email")
-def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Returns a best-guess general contact address for the company -
     explicitly NOT a specific verified person, since no real employee
     lookup is connected. The frontend shows this to the user before
@@ -392,7 +393,7 @@ class SendOutreachIn(BaseModel):
  
  
 @router.post("/matches/{user_id}/connect/{listing_id}/send-email")
-def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, db: Session = Depends(get_db)):
+def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Actually sends a real email via Resend, and logs it. The
     to_address must be supplied by the caller (i.e. shown to and
     confirmed by the user in the frontend first) - this endpoint does
