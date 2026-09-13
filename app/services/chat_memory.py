@@ -41,7 +41,11 @@ def summarize_conversation(anthropic_client, conversation: list[dict]) -> str:
  
  
 def store_memory(db: Session, user_id: str, summary: str):
-    if summary == "NONE" or not summary:
+    # Skip non-durable results: the AI is instructed to return exactly
+    # "NONE" when nothing is worth keeping, but also guard against a
+    # blank/whitespace-only or differently-cased "none" slipping through
+    # and creating a useless memory row.
+    if not summary or not summary.strip() or summary.strip().upper() == "NONE":
         return
     db.add(ChatMemory(user_id=user_id, summary=summary))
     db.commit()
