@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
  
@@ -14,7 +15,7 @@ class DismissIn(BaseModel):
  
  
 @router.post("")
-def dismiss_listing(payload: DismissIn, db: Session = Depends(get_db)):
+def dismiss_listing(payload: DismissIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Marks a listing 'not interested, never show this again' - the
     real, concrete answer to a documented Jobright weakness (relisting
     jobs a person already rejected). A listing dismissed here is
@@ -26,6 +27,7 @@ def dismiss_listing(payload: DismissIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -46,7 +48,7 @@ def dismiss_listing(payload: DismissIn, db: Session = Depends(get_db)):
  
  
 @router.delete("/{user_id}/{listing_id}")
-def undismiss_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def undismiss_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lets a person change their mind - a real listing they dismissed
     can come back into their match pool if they later reconsider.
     """
@@ -69,7 +71,7 @@ def undismiss_listing(user_id: str, listing_id: str, db: Session = Depends(get_d
  
  
 @router.get("/{user_id}")
-def get_dismissed(user_id: str, db: Session = Depends(get_db)):
+def get_dismissed(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
