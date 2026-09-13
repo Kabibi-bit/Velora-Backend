@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -32,8 +32,8 @@ def _suggestion_to_dict(s: EngagementSuggestion) -> dict:
  
 class DraftIn(BaseModel):
     user_id: str
-    post_content: str
-    poster_context: str | None = None
+    post_content: str = Field(max_length=8000)
+    poster_context: str | None = Field(default=None, max_length=2000)
  
  
 @router.post("/draft")
@@ -226,7 +226,7 @@ def decline_suggestion(suggestion_id: str, db: Session = Depends(get_db), author
  
  
 class LogEntryIn(BaseModel):
-    note: str
+    note: str = Field(max_length=4000)
  
  
 @router.post("/{suggestion_id}/log")
