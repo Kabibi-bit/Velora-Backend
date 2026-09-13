@@ -186,6 +186,20 @@ class Notification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
  
  
+class AdmissionsSnapshot(Base):
+    """A timestamped point in a student's readiness trajectory. Persisting these
+    is what lets the app show progress over real time - the one thing a stateless
+    chatbot cannot do. `avg` is the overall readiness signal (0-100); `per_school`
+    and `evidence` capture the detail for that moment."""
+    __tablename__ = "admissions_snapshots"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    avg = Column(Integer, nullable=False)
+    per_school = Column(JSONB)
+    evidence = Column(JSONB)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+ 
 class CareerDiscoveryResult(Base):
     __tablename__ = "career_discovery_results"
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, primary_key=True)
