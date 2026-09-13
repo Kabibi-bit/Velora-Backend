@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
  
 from app.db import get_db
-from app.models.db_models import Profile, Listing, MatchScore, Outcome, RoadmapMilestone
+from app.models.db_models import Profile, Listing, Outcome, RoadmapMilestone
 from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, get_personalized_factor_weights
  
 router = APIRouter(prefix="/listings", tags=["listings"])
