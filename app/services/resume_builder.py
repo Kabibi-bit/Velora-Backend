@@ -48,6 +48,14 @@ _STOPWORDS = {
     # them the way it catches regular verbs like "created"/"managed".
     "wrote", "led", "built", "grew", "sold", "ran", "gave",
     "took", "made", "found", "held", "kept", "left", "spent", "spoke",
+    # Short (3-char) English function words - needed because the length
+    # filter below admits 3-char tokens (to keep real 3-char skills like
+    # "sql", "aws", "api", "css"); without these, common function words
+    # would leak into the keyword check. None is ever a skill name.
+    "the", "and", "for", "you", "are", "was", "but", "all", "can",
+    "has", "our", "had", "not", "its", "new", "any", "via", "per",
+    "who", "how", "why", "out", "one", "two", "get", "got", "let",
+    "may", "now", "off", "own", "see", "too", "use", "way",
     "drove", "chose", "began", "brought", "taught", "bought", "caught",
     "thought", "sought", "knew", "saw", "went", "came", "did", "said",
     # Quantifiers and generic filler nouns - real, but not skills;
@@ -94,7 +102,7 @@ def _meaningful_tokens(text: str) -> set[str]:
     """
     return {
         t for t in tokenize(text)
-        if len(t) > 3 and t not in _STOPWORDS
+        if len(t) >= 3 and t not in _STOPWORDS
         and not t.endswith("ed") and not t.endswith("ly")
     }
  
