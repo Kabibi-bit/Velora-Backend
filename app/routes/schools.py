@@ -22,6 +22,7 @@ from app.services.schools import (
     weekly_focus,
     polish_analyze,
     brainstorm_outline,
+    essay_rubric_review,
 )
  
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -279,7 +280,11 @@ def schools_essay_polish(user_id: str, payload: dict = Body(default={}), db: Ses
         text = str(payload.get("text", ""))[:20000]
     if len(text.strip()) < 120:
         raise HTTPException(status_code=400, detail="Provide at least a few sentences of the draft to analyze")
-    return {"report": polish_analyze(text, profile)}
+    prompt = str(payload.get("prompt", ""))[:500] if isinstance(payload, dict) else ""
+    return {
+        "rubric": essay_rubric_review(text, profile, prompt),
+        "report": polish_analyze(text, profile),
+    }
  
  
 @router.post("/essay-brainstorm/{user_id}")
