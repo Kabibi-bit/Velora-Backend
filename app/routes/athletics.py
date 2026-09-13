@@ -2,7 +2,7 @@ import os
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -21,7 +21,7 @@ class ContentPlanIn(BaseModel):
     sport: str
     level: str
     career_direction: str
-    achievements: str = ""
+    achievements: str = Field(default="", max_length=4000)
  
  
 @router.post("/content-coach")
@@ -82,8 +82,8 @@ VALID_EVENT_STATUSES = {"upcoming", "attended", "passed", "missed"}
  
 class EventIn(BaseModel):
     user_id: str
-    title: str
-    org: str | None = None
+    title: str = Field(max_length=300)
+    org: str | None = Field(default=None, max_length=300)
     event_type: str
     event_date: date | None = None
     roadmap_stage: int | None = None
@@ -191,9 +191,9 @@ class CoachOutreachIn(BaseModel):
     sport: str
     level: str
     career_direction: str
-    achievements: str = ""
-    target_description: str
-    org_name: str
+    achievements: str = Field(default="", max_length=4000)
+    target_description: str = Field(max_length=2000)
+    org_name: str = Field(max_length=300)
     roadmap_stage: int | None = None
     roadmap_stage_title: str | None = None
  
@@ -336,7 +336,7 @@ class ClipEditPlanIn(BaseModel):
     sport: str
     level: str
     career_direction: str
-    clips_description: str
+    clips_description: str = Field(max_length=4000)
  
  
 @router.post("/edit-plan")
@@ -366,7 +366,7 @@ class AthleteRoadmapIn(BaseModel):
     sport: str
     level: str
     career_direction: str
-    achievements: str = ""
+    achievements: str = Field(default="", max_length=4000)
  
  
 @router.post("/roadmap")
@@ -460,7 +460,7 @@ def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict
  
 class MilestoneStatusIn(BaseModel):
     status: str
-    reflection: str | None = None
+    reflection: str | None = Field(default=None, max_length=4000)
  
  
 @router.post("/roadmap/milestone/{milestone_id}/status")
