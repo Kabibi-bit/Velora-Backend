@@ -115,3 +115,20 @@ def require_auth_for_user(user_id: str, authorization: str = Header(None)) -> di
     """
     return verify_token_belongs_to_user(user_id, authorization)
  
+ 
+def require_valid_token(authorization: str = Header(None)) -> dict:
+    """A real, reusable dependency for endpoints whose data isn't
+    owned by a specific user (e.g. a public company's leadership
+    research derived from a listing) but which should still require a
+    genuinely logged-in caller - so an expensive AI/web-search call
+    can't be hit anonymously. Enforces a valid, non-expired token
+    only; deliberately no ownership check, since there is no owning
+    user to check against."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+ 
