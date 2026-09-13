@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import verify_token_belongs_to_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -22,8 +22,8 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
 class ChatIn(BaseModel):
     user_id: str
-    message: str
-    history: list[dict] = []
+    message: str = Field(max_length=8000)
+    history: list[dict] = Field(default=[], max_length=100)
  
  
 def build_system_context(db: Session, user_id: str) -> str:
