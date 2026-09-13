@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -19,7 +20,7 @@ class DraftIn(BaseModel):
  
  
 @router.post("/draft")
-def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
+def draft_outreach(payload: DraftIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """The 'Find a contact' action - drafts a referral email straight
     into Workshop instead of showing it inline. Never sends anything.
     """
@@ -28,6 +29,7 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -50,7 +52,7 @@ class DraftLeadershipGroundedIn(BaseModel):
  
  
 @router.post("/draft-leadership-grounded")
-def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGroundedIn, db: Session = Depends(get_db)):
+def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGroundedIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Researches the company's real, current senior leadership - not
     just the CEO, but other genuine current executives too - and what
     they've actually, recently said and prioritized publicly, then
@@ -71,6 +73,7 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -102,7 +105,7 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
  
  
 @router.get("/leadership-research/{listing_id}")
-def get_leadership_research(listing_id: str, db: Session = Depends(get_db)):
+def get_leadership_research(listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """A standalone view of the company research itself, not tied to
     drafting an email - so a candidate can genuinely understand what
     a company's real leadership seems to be prioritizing before
@@ -129,7 +132,7 @@ def get_leadership_research(listing_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def list_outreach(user_id: str, db: Session = Depends(get_db)):
+def list_outreach(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lists every outreach email (drafted or sent) for Workshop -
     both auto-generated (while Auto mode was running) and manually
     requested via 'Find a contact'.
@@ -173,7 +176,7 @@ class EditOutreachIn(BaseModel):
  
  
 @router.patch("/{outreach_id}")
-def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
+def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Lets the user edit a drafted email in Workshop before sending."""
     import uuid as uuid_module
     try:
@@ -183,6 +186,7 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
     outreach = db.query(OutreachEmail).filter(OutreachEmail.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
+    verify_token_belongs_to_user(str(outreach.user_id), authorization)
     if outreach.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent, cannot edit")
     if payload.subject is not None:
@@ -197,7 +201,7 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
  
  
 @router.post("/{outreach_id}/send")
-def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
+def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     """The one real send action - fires only when explicitly called,
     which the frontend only does from a user clicking Send in
     Workshop. Never called automatically by any scan or Auto cycle.
@@ -210,6 +214,7 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
     outreach = db.query(OutreachEmail).filter(OutreachEmail.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
+    verify_token_belongs_to_user(str(outreach.user_id), authorization)
     if outreach.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent")
  
@@ -225,7 +230,7 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/send-all/{user_id}")
-def send_all_pending(user_id: str, db: Session = Depends(get_db)):
+def send_all_pending(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The 'Send all pending outreach' bulk action for Workshop - still
     a single, explicit, human-triggered click, just covering everything
     queued at once instead of one at a time.
