@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -21,7 +22,7 @@ class OutcomeIn(BaseModel):
  
  
 @router.post("")
-def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
+def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Logs a real outcome on an application - the other major
     'something real just happened' moment this app already tracks,
     alongside milestone completion. When a real reflection is
@@ -39,6 +40,8 @@ def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.listing_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id and listing_id must be valid UUIDs")
+    # Body carries user_id, so verify the token against it directly.
+    verify_token_belongs_to_user(payload.user_id, authorization)
     outcome = Outcome(user_id=payload.user_id, listing_id=payload.listing_id, status=payload.status)
     db.add(outcome)
  
@@ -60,7 +63,7 @@ def log_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def get_outcomes(user_id: str, db: Session = Depends(get_db)):
+def get_outcomes(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -71,7 +74,7 @@ def get_outcomes(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/stats")
-def get_outcome_stats(user_id: str, db: Session = Depends(get_db)):
+def get_outcome_stats(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Real aggregation backing the dashboard's donut chart and monthly
     target chart - counts by status, and counts by month for the last
     3 months, computed from actual logged outcomes (no mock numbers).
@@ -100,7 +103,7 @@ def get_outcome_stats(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/calibration")
-def get_calibration(user_id: str, db: Session = Depends(get_db)):
+def get_calibration(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Is Velora's own confidence score actually trustworthy for THIS
     user? Joins real logged outcomes back to the confidence score each
     application had when sent, and reports the real conversion rate
@@ -133,7 +136,7 @@ def get_calibration(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/personalization-audit")
-def get_personalization_audit(user_id: str, db: Session = Depends(get_db)):
+def get_personalization_audit(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The self-audit no mainstream job platform does: checks whether
     Velora's OWN personalized scoring is actually helping THIS user,
     or just moving numbers around. Compares the real (personalized)
@@ -173,7 +176,7 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/personalization-insights")
-def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
+def get_personalization_insights(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The genuine depth upgrade beyond factor-category reweighting -
     reads the real content of applications you actually sent, not
     just pre-computed numeric factor tallies, and finds specific,
@@ -226,7 +229,7 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/factor-interactions")
-def get_factor_interactions(user_id: str, db: Session = Depends(get_db)):
+def get_factor_interactions(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Goes beyond /personalization-audit and the numeric weights in
     /listings/matches: those can only ever say whether a SINGLE
     factor predicts success in isolation. This checks whether PAIRS
@@ -269,7 +272,7 @@ INTERVIEW_FOLLOWUP_DAYS = 7
  
  
 @router.get("/{user_id}/reminders")
-def get_reminders(user_id: str, db: Session = Depends(get_db)):
+def get_reminders(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Surfaces real, time-sensitive nudges Jobright's tracker lacks -
     it has statuses (Applied, Interviewing, Offer...) but no layer
     prompting timely action on them. Two genuinely distinct cases,
@@ -339,7 +342,7 @@ SEARCH_STRAIN_MIN_DAYS = 21
  
  
 @router.get("/{user_id}/search-strain")
-def get_search_strain(user_id: str, db: Session = Depends(get_db)):
+def get_search_strain(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The honest, human answer to the documented burnout dimension:
     a long, high-volume search with no positive traction quietly
     erodes confidence, and a tool that just says 'apply to more'
