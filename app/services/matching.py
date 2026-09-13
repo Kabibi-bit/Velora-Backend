@@ -135,8 +135,16 @@ def _has_dealbreaker(tags: list[str], dealbreakers: str) -> bool:
     if not dealbreaker_tokens:
         return False
     for tag in tags:
-        tag_tokens = set(tokenize(tag)) | {tag.lower().replace("-", "")}
+        tag_lower = tag.lower()
+        tag_tokens = set(tokenize(tag)) | {tag_lower.replace("-", "")}
         if dealbreaker_tokens & tag_tokens:
+            return True
+        # Also catch a dealbreaker word appearing as a whole word INSIDE
+        # a hyphenated tag ("travel" inside "travel-required" - a hyphen
+        # is a real word boundary). Without this, a stated dealbreaker
+        # could fail to exclude a listing the person explicitly ruled
+        # out. Matches the frontend hasDealbreaker's behavior.
+        if any(_word_boundary_contains(tag_lower, db) for db in dealbreaker_tokens):
             return True
     return False
  
