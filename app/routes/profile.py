@@ -1,11 +1,12 @@
 import re
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
  
 from app.db import get_db
 from app.models.db_models import Profile
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
  
 router = APIRouter(prefix="/profile", tags=["profile"])
  
@@ -97,7 +98,7 @@ def detect_athletic_traits(text: str) -> dict:
  
  
 @router.post("")
-def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
+def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Creates a new profile snapshot and marks it current.
     Previous profile rows stay in the table - that history is what
     lets the chatbot later explain how a user's goals have changed.
@@ -107,6 +108,9 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    # This endpoint takes user_id from the body, so verify the token
+    # against it directly (the path-based dependency doesn't apply).
+    verify_token_belongs_to_user(payload.user_id, authorization)
     db.query(Profile).filter(
         Profile.user_id == payload.user_id, Profile.is_current == True  # noqa: E712
     ).update({"is_current": False})
@@ -149,7 +153,7 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def get_current_profile(user_id: str, db: Session = Depends(get_db)):
+def get_current_profile(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -182,7 +186,7 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/history")
-def get_profile_history(user_id: str, db: Session = Depends(get_db)):
+def get_profile_history(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -206,7 +210,7 @@ def get_profile_history(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/potential-score")
-def get_potential_score(user_id: str, db: Session = Depends(get_db)):
+def get_potential_score(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Server-side version of the frontend's 'Career potential' gauge -
     same formula (roadmap progress + skill coverage + match quality),
     computed from real stored data instead of client-side localStorage,
@@ -260,7 +264,7 @@ class AutoApplySettingsIn(BaseModel):
  
  
 @router.post("/{user_id}/auto-apply-settings")
-def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Session = Depends(get_db)):
+def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Turns Auto Apply mode on/off and sets the confidence threshold
     that determines what gets auto-drafted-and-queued during a scan,
     versus what only gets surfaced as a regular match.
@@ -290,7 +294,7 @@ def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Sess
  
  
 @router.get("/{user_id}/auto-apply-settings")
-def get_auto_apply_settings(user_id: str, db: Session = Depends(get_db)):
+def get_auto_apply_settings(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
