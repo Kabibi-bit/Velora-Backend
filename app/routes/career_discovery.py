@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -19,7 +19,7 @@ class DiscoveryAnswersIn(BaseModel):
     data: int
     creative: int
     structure: int
-    free_text: str = ""
+    free_text: str = Field(default="", max_length=4000)
  
  
 @router.post("")
