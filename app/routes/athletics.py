@@ -1,6 +1,7 @@
 import os
 from datetime import date
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -24,7 +25,7 @@ class ContentPlanIn(BaseModel):
  
  
 @router.post("/content-coach")
-def content_coach(payload: ContentPlanIn):
+def content_coach(payload: ContentPlanIn, _auth: dict = Depends(require_valid_token)):
     """Generates real, grounded recruiting content guidance - a
     highlight reel structure, commonly-evaluated skills/metrics for
     this sport and level, specific drills to practice, and a filming
@@ -56,7 +57,7 @@ class ProgramResearchIn(BaseModel):
  
  
 @router.post("/research-program")
-def research_program(payload: ProgramResearchIn):
+def research_program(payload: ProgramResearchIn, _auth: dict = Depends(require_valid_token)):
     """The real-search upgrade: gives Claude the actual Anthropic web
     search tool to find and cite genuine, current public information
     about a specific named program, rather than general knowledge.
@@ -91,11 +92,12 @@ class EventIn(BaseModel):
  
  
 @router.post("/events")
-def create_event(payload: EventIn, db: Session = Depends(get_db)):
+def create_event(payload: EventIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Tracks a deadline or trial opportunity - a tryout, camp,
     combine, or application deadline - optionally tied to a specific
     roadmap stage.
     """
+    verify_token_belongs_to_user(payload.user_id, authorization)
     if not payload.title.strip():
         raise HTTPException(status_code=400, detail="title is required")
     if payload.event_type not in VALID_EVENT_TYPES:
@@ -113,7 +115,7 @@ def create_event(payload: EventIn, db: Session = Depends(get_db)):
  
  
 @router.get("/events/{user_id}")
-def list_events(user_id: str, db: Session = Depends(get_db)):
+def list_events(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -148,7 +150,7 @@ class EventStatusIn(BaseModel):
  
  
 @router.post("/events/{event_id}/status")
-def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Depends(get_db)):
+def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     if payload.status not in VALID_EVENT_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {VALID_EVENT_STATUSES}")
@@ -162,13 +164,14 @@ def update_event_status(event_id: str, payload: EventStatusIn, db: Session = Dep
     event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    verify_token_belongs_to_user(str(event.user_id), authorization)
     event.status = payload.status
     db.commit()
     return {"status": "updated", "event_status": event.status}
  
  
 @router.delete("/events/{event_id}")
-def delete_event(event_id: str, db: Session = Depends(get_db)):
+def delete_event(event_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(event_id)
@@ -177,6 +180,7 @@ def delete_event(event_id: str, db: Session = Depends(get_db)):
     event = db.query(AthleteEvent).filter(AthleteEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    verify_token_belongs_to_user(str(event.user_id), authorization)
     db.delete(event)
     db.commit()
     return {"status": "deleted"}
@@ -195,13 +199,14 @@ class CoachOutreachIn(BaseModel):
  
  
 @router.post("/outreach")
-def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
+def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Drafts a real email and cold-call script for reaching a coach or
     staff member, and stores it as a real draft - review/edit/send
     from here, same lifecycle as every other outreach draft in the
     app. Never invents a specific named person - only describes the
     TYPE of contact and gives a real, usable script.
     """
+    verify_token_belongs_to_user(payload.user_id, authorization)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -255,7 +260,7 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db)):
  
  
 @router.get("/outreach/{user_id}")
-def list_outreach(user_id: str, db: Session = Depends(get_db)):
+def list_outreach(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -280,7 +285,7 @@ class EditOutreachIn(BaseModel):
  
  
 @router.patch("/outreach/{outreach_id}")
-def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db)):
+def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(outreach_id)
@@ -289,6 +294,7 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
     outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
+    verify_token_belongs_to_user(str(outreach.user_id), authorization)
     if outreach.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent, cannot edit")
     if payload.subject is not None:
@@ -303,7 +309,7 @@ def edit_outreach(outreach_id: str, payload: EditOutreachIn, db: Session = Depen
  
  
 @router.post("/outreach/{outreach_id}/send")
-def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
+def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(outreach_id)
@@ -312,6 +318,7 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db)):
     outreach = db.query(AthleteOutreach).filter(AthleteOutreach.id == outreach_id).first()
     if not outreach:
         raise HTTPException(status_code=404, detail="Outreach draft not found")
+    verify_token_belongs_to_user(str(outreach.user_id), authorization)
     if outreach.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent")
     try:
@@ -333,7 +340,7 @@ class ClipEditPlanIn(BaseModel):
  
  
 @router.post("/edit-plan")
-def edit_plan(payload: ClipEditPlanIn):
+def edit_plan(payload: ClipEditPlanIn, _auth: dict = Depends(require_valid_token)):
     """Not real video editing or processing - there's no video hosting
     infrastructure in this stack. This is a real, specific edit PLAN
     grounded in the athlete's own description of their footage, for
@@ -363,11 +370,12 @@ class AthleteRoadmapIn(BaseModel):
  
  
 @router.post("/roadmap")
-def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_db)):
+def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Generates and persists a real roadmap for this athlete -
     replaces any previous one on regeneration, same behavior as the
     candidate roadmap endpoint.
     """
+    verify_token_belongs_to_user(payload.user_id, authorization)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -420,7 +428,7 @@ def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_
  
  
 @router.get("/roadmap/{user_id}")
-def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db)):
+def get_athlete_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -456,7 +464,7 @@ class MilestoneStatusIn(BaseModel):
  
  
 @router.post("/roadmap/milestone/{milestone_id}/status")
-def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Marks real progress on one milestone.
  
     When status genuinely transitions to "done" and the person
@@ -479,6 +487,7 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
     milestone = db.query(AthleteRoadmapMilestone).filter(AthleteRoadmapMilestone.id == milestone_id).first()
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
+    verify_token_belongs_to_user(str(milestone.user_id), authorization)
     milestone.status = payload.status
  
     journal_entry_id = None
