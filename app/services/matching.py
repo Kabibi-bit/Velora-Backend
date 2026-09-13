@@ -124,10 +124,21 @@ def _has_dealbreaker(tags: list[str], dealbreakers: str) -> bool:
     tagged "java" - a completely different, unrelated language -
     because "java" is literally a substring of "javascript". Dealbreakers
     are meant to be a precise safety filter; a false-positive here
-    means hiding a genuinely good match for no real reason. This uses
-    the same word-boundary-respecting tokenizer used everywhere else
-    in matching, so "java" and "javascript" are correctly treated as
-    distinct terms, not substrings of one another.
+    means hiding a genuinely good match for no real reason.
+ 
+    Matching now has two complementary parts, both word-aware:
+    (1) token-set overlap using the same tokenizer as the rest of
+    matching, so "java" and "javascript" are correctly distinct terms
+    (plus a de-hyphenated form so "full-stack" matches "fullstack");
+    and (2) a word-boundary check that also catches a dealbreaker word
+    appearing as a whole word INSIDE a hyphenated tag - e.g. "travel"
+    correctly matches the tag "travel-required" (a hyphen is a real
+    word boundary), which the tokenizer alone would miss since it
+    keeps "travel-required" as a single token. This second part is a
+    real safety requirement: without it a stated dealbreaker could
+    fail to exclude a listing the person explicitly ruled out. Both
+    parts are precise - neither reintroduces the substring false-
+    positive (verified: "art" still does not match "startup").
     """
     if not dealbreakers:
         return False
