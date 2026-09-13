@@ -436,7 +436,10 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     at all.
     """
     factor_weights = factor_weights or {}
-    listing_tags = listing.get("tags") or []
+    # Defensive lowercase: tag comparison below is case-sensitive, and
+    # a stray uppercase tag from any source (LLM extraction, manual
+    # listings, legacy rows) would otherwise silently score far lower.
+    listing_tags = [str(t).lower() for t in (listing.get("tags") or [])]
     if _has_dealbreaker(listing_tags, profile.get("dealbreakers") or ""):
         return None
  
@@ -684,18 +687,24 @@ def get_tag_weights_from_outcomes(db_outcomes: list[dict], as_of: "date | None" 
     as_of = as_of or date.today()
     raw_deltas: dict[str, list[float]] = {}
     for o in db_outcomes:
-        delta = {"interview": 1.5, "offer": 2.5, "applied": 0, "rejected": -1.0, "ghosted": -0.5}.get(o["status"], 0)
+        delta = {"interview": 1.5, "offer": 2.5, "applied": 0, "rejected": -1.0, "ghosted": -0.5}.get(o.get("status"), 0)
         updated_at = o.get("updated_at")
         decay = 1.0
         if updated_at:
-            if isinstance(updated_at, datetime):
-                outcome_date = updated_at.date()
-            elif isinstance(updated_at, date):
-                outcome_date = updated_at
-            else:
-                outcome_date = date.fromisoformat(str(updated_at)[:10])
-            days_old = (as_of - outcome_date).days
-            decay = _recency_decay(days_old)
+            try:
+                if isinstance(updated_at, datetime):
+                    outcome_date = updated_at.date()
+                elif isinstance(updated_at, date):
+                    outcome_date = updated_at
+                else:
+                    outcome_date = date.fromisoformat(str(updated_at)[:10])
+                days_old = (as_of - outcome_date).days
+                decay = _recency_decay(days_old)
+            except (ValueError, TypeError):
+                # A malformed updated_at shouldn't crash scoring - just
+                # treat it as no recency decay rather than take the
+                # whole match endpoint down over one bad row.
+                decay = 1.0
         for tag in o.get("tags", []):
             raw_deltas.setdefault(tag, []).append(delta * decay)
  
