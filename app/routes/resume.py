@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -15,22 +15,22 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
 class ResumeEntryIn(BaseModel):
     user_id: str
-    entry_type: str  # work / education / project
-    title: str
-    org: str | None = None
-    start_date: str | None = None
-    end_date: str | None = None
-    raw_description: str
+    entry_type: str = Field(max_length=50)  # work / education / project
+    title: str = Field(max_length=300)
+    org: str | None = Field(default=None, max_length=300)
+    start_date: str | None = Field(default=None, max_length=50)
+    end_date: str | None = Field(default=None, max_length=50)
+    raw_description: str = Field(max_length=5000)
     display_order: int = 0
  
  
 class ResumeEntryUpdate(BaseModel):
-    entry_type: str | None = None
-    title: str | None = None
-    org: str | None = None
-    start_date: str | None = None
-    end_date: str | None = None
-    raw_description: str | None = None
+    entry_type: str | None = Field(default=None, max_length=50)
+    title: str | None = Field(default=None, max_length=300)
+    org: str | None = Field(default=None, max_length=300)
+    start_date: str | None = Field(default=None, max_length=50)
+    end_date: str | None = Field(default=None, max_length=50)
+    raw_description: str | None = Field(default=None, max_length=5000)
     display_order: int | None = None
  
  
@@ -324,7 +324,7 @@ def get_skills_section(user_id: str, db: Session = Depends(get_db), _auth: dict 
  
  
 class SkillAddIn(BaseModel):
-    skill: str
+    skill: str = Field(max_length=200)
  
  
 @router.post("/{user_id}/skills/add")
@@ -563,7 +563,7 @@ def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session
 class UpdateBulletIn(BaseModel):
     entry_id: str
     bullet_index: int
-    new_text: str
+    new_text: str = Field(max_length=2000)
  
  
 @router.patch("/{user_id}/bullet")
