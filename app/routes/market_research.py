@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import verify_token_belongs_to_user, require_valid_token
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -18,7 +19,7 @@ class CompanyResearchIn(BaseModel):
  
  
 @router.post("/research-company")
-def research_company_route(payload: CompanyResearchIn):
+def research_company_route(payload: CompanyResearchIn, _auth: dict = Depends(require_valid_token)):
     if not payload.company_name.strip():
         raise HTTPException(status_code=400, detail="company_name is required")
     if not payload.role_title.strip():
@@ -38,7 +39,7 @@ class InterviewPrepIn(BaseModel):
  
  
 @router.post("/interview-prep")
-def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db)):
+def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(payload.user_id)
@@ -69,4 +70,5 @@ def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate interview prep just now: {e}")
     return prep
+    verify_token_belongs_to_user(payload.user_id, authorization)
  
