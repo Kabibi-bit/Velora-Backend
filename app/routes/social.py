@@ -17,10 +17,10 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
 class PostIn(BaseModel):
     user_id: str
-    body: str
-    video_url: str | None = None
-    tag_value: str | None = None
-    tag_label: str | None = None
+    body: str = Field(max_length=10000)
+    video_url: str | None = Field(default=None, max_length=2000)
+    tag_value: str | None = Field(default=None, max_length=100)
+    tag_label: str | None = Field(default=None, max_length=300)
  
  
 @router.post("/posts")
@@ -84,7 +84,7 @@ def list_journal(user_id: str, search: str | None = None, db: Session = Depends(
  
  
 class EditPostIn(BaseModel):
-    body: str
+    body: str = Field(max_length=10000)
  
  
 @router.patch("/posts/{post_id}")
