@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -34,7 +35,7 @@ class ResumeEntryUpdate(BaseModel):
  
  
 @router.post("/entries")
-def create_entry(payload: ResumeEntryIn, db: Session = Depends(get_db)):
+def create_entry(payload: ResumeEntryIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Adds one real, user-provided fact about their experience - the
     only kind of input this feature accepts. Nothing here is ever
     generated; raw_description is always the person's own words.
@@ -44,6 +45,7 @@ def create_entry(payload: ResumeEntryIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     entry = ResumeEntry(
         user_id=payload.user_id, entry_type=payload.entry_type, title=payload.title,
         org=payload.org, start_date=payload.start_date, end_date=payload.end_date,
@@ -56,7 +58,7 @@ def create_entry(payload: ResumeEntryIn, db: Session = Depends(get_db)):
  
  
 @router.get("/entries/{user_id}")
-def list_entries(user_id: str, db: Session = Depends(get_db)):
+def list_entries(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -81,7 +83,7 @@ def list_entries(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.patch("/entries/{entry_id}")
-def update_entry(entry_id: str, payload: ResumeEntryUpdate, db: Session = Depends(get_db)):
+def update_entry(entry_id: str, payload: ResumeEntryUpdate, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(entry_id)
@@ -90,6 +92,7 @@ def update_entry(entry_id: str, payload: ResumeEntryUpdate, db: Session = Depend
     entry = db.query(ResumeEntry).filter(ResumeEntry.id == entry_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
+    verify_token_belongs_to_user(str(entry.user_id), authorization)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(entry, field, value)
     entry.updated_at = datetime.utcnow()
@@ -98,7 +101,7 @@ def update_entry(entry_id: str, payload: ResumeEntryUpdate, db: Session = Depend
  
  
 @router.delete("/entries/{entry_id}")
-def delete_entry(entry_id: str, db: Session = Depends(get_db)):
+def delete_entry(entry_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(entry_id)
@@ -107,13 +110,14 @@ def delete_entry(entry_id: str, db: Session = Depends(get_db)):
     entry = db.query(ResumeEntry).filter(ResumeEntry.id == entry_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
+    verify_token_belongs_to_user(str(entry.user_id), authorization)
     db.delete(entry)
     db.commit()
     return {"deleted": True}
  
  
 @router.post("/generate/{user_id}")
-def generate_resume(user_id: str, db: Session = Depends(get_db)):
+def generate_resume(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Polishes the person's own real entries into resume language -
     never generates work history from scratch. Requires at least one
     real entry; there is no fallback that invents one.
@@ -215,7 +219,7 @@ def generate_resume(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def get_resume(user_id: str, db: Session = Depends(get_db)):
+def get_resume(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -228,7 +232,7 @@ def get_resume(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/ats-check")
-def get_ats_alignment(user_id: str, db: Session = Depends(get_db)):
+def get_ats_alignment(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Real, deterministic keyword coverage between the resume's
     actual content and the person's stated goal/skills - reuses the
     same synonym-aware matching already proven in the core matching
@@ -251,7 +255,7 @@ def get_ats_alignment(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/tailor/{listing_id}")
-def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Which of the person's real entries are most worth leading with
     for this specific listing. Never changes what an entry says, only
     how they're ordered - the honest content is identical regardless
@@ -296,7 +300,7 @@ def tailor_resume_for_listing(user_id: str, listing_id: str, db: Session = Depen
  
  
 @router.get("/{user_id}/skills")
-def get_skills_section(user_id: str, db: Session = Depends(get_db)):
+def get_skills_section(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Only ever lists skills the person explicitly typed as their
     own; anything genuinely implied by their real entries but not
     already in that list comes back separately as a suggestion, never
@@ -324,7 +328,7 @@ class SkillAddIn(BaseModel):
  
  
 @router.post("/{user_id}/skills/add")
-def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db)):
+def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The only sanctioned way a suggested_additions entry moves into
     the person's explicit, claimed skills list - a deliberate action
     on a specific skill, never an automatic promotion. There's no
@@ -364,7 +368,7 @@ def add_suggested_skill(user_id: str, body: SkillAddIn, db: Session = Depends(ge
  
  
 @router.post("/{user_id}/skills/remove")
-def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db)):
+def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The other half of the add endpoint above - removing a skill
     someone added by mistake, or one they no longer want claimed,
     should be exactly as easy as adding it was. Without this, the
@@ -398,7 +402,7 @@ def remove_explicit_skill(user_id: str, body: SkillAddIn, db: Session = Depends(
  
  
 @router.get("/{user_id}/download")
-def download_resume_docx(user_id: str, db: Session = Depends(get_db)):
+def download_resume_docx(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Real, downloadable .docx - the actual end product every other
     resume endpoint has been building toward. Uses the person's real,
     most recently generated resume (via POST /generate/{user_id}) and
@@ -444,7 +448,7 @@ def download_resume_docx(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}/download/tailored/{listing_id}")
-def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """A real, downloadable .docx tailored for one specific listing -
     connects two pieces that already existed separately: the real
     relevance-ranking already proven in tailor_resume_for_listing
@@ -521,7 +525,7 @@ def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = D
  
  
 @router.get("/{user_id}/cover-letter/{listing_id}")
-def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """A real cover letter for one specific listing, grounded only in
     the person's own real entries and stated goal - the concrete
     answer to a documented, verified competitor failure where their
@@ -563,7 +567,7 @@ class UpdateBulletIn(BaseModel):
  
  
 @router.patch("/{user_id}/bullet")
-def update_resume_bullet(user_id: str, body: UpdateBulletIn, db: Session = Depends(get_db)):
+def update_resume_bullet(user_id: str, body: UpdateBulletIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lets a person directly edit one bullet in their already-
     generated resume - the concrete backend answer to a documented
     complaint that users wish they could edit an AI-tailored resume
