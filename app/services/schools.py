@@ -29,6 +29,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~3.6%",
         "region": "Cambridge, MA",
+        "dataDepth": "deep",
         "motto": "\"Veritas\" — Latin for \"truth.\" Harvard's mission is to educate citizens and citizen-leaders through a transformative liberal-arts education.",
         "values": [
             "intellectual vitality",
@@ -48,6 +49,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~4%",
         "region": "Stanford, CA",
+        "dataDepth": "deep",
         "motto": "\"Die Luft der Freiheit weht\" — German for \"the wind of freedom blows,\" chosen to enshrine fearless, unfettered inquiry (\"studies blossom and the minds move\").",
         "values": [
             "intellectual vitality",
@@ -68,6 +70,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~4%",
         "region": "Cambridge, MA",
+        "dataDepth": "deep",
         "motto": "\"Mens et Manus\" — Latin for \"Mind and Hand.\" MIT's founding ideal is education for practical application: learning by doing, theory joined to making.",
         "values": [
             "hands-on making",
@@ -88,6 +91,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~3.8%",
         "region": "Pasadena, CA",
+        "dataDepth": "deep",
         "motto": "\"The truth shall make you free\" (Veritas vos liberabit). Caltech is a tiny, intensely rigorous science-and-engineering institute (~2,200 students).",
         "values": [
             "capacity for rigor",
@@ -107,6 +111,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~4%",
         "region": "Princeton, NJ",
+        "dataDepth": "deep",
         "motto": "\"Dei sub numine viget\" — \"Under God's power she flourishes,\" paired with the informal ethos \"in the nation's service and the service of humanity.\"",
         "values": [
             "scholarship",
@@ -126,6 +131,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~4%",
         "region": "New Haven, CT",
+        "dataDepth": "deep",
         "motto": "\"Lux et Veritas\" — Latin for \"Light and Truth.\"",
         "values": [
             "intellectual engagement",
@@ -147,6 +153,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~6%",
         "region": "Philadelphia, PA",
+        "dataDepth": "deep",
         "motto": "\"Leges sine moribus vanae\" — \"Laws without morals are in vain,\" reflecting Benjamin Franklin's founding emphasis on practical, ethical purpose.",
         "values": [
             "pre-professional focus",
@@ -166,6 +173,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~4%",
         "region": "New York, NY",
+        "dataDepth": "deep",
         "motto": "\"In lumine Tuo videbimus lumen\" — \"In Thy light shall we see light.\"",
         "values": [
             "intellectual breadth",
@@ -185,6 +193,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~5%",
         "region": "Providence, RI",
+        "dataDepth": "deep",
         "motto": "\"In Deo Speramus\" — \"In God we hope.\" Brown is known for its Open Curriculum (no core requirements).",
         "values": [
             "intellectual self-direction",
@@ -204,6 +213,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~5.3%",
         "region": "Hanover, NH",
+        "dataDepth": "deep",
         "motto": "\"Vox clamantis in deserto\" — \"A voice crying out in the wilderness.\" Dartmouth is the smallest, most undergraduate-focused Ivy.",
         "values": [
             "undergraduate focus",
@@ -223,6 +233,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~6%",
         "region": "Durham, NC",
+        "dataDepth": "deep",
         "motto": "\"Eruditio et Religio\" — \"Knowledge and Faith.\"",
         "values": [
             "ambition with balance",
@@ -244,6 +255,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~6%",
         "region": "Baltimore, MD",
+        "dataDepth": "deep",
         "motto": "\"Veritas vos liberabit\" — \"The truth shall set you free.\" America's first research university.",
         "values": [
             "research",
@@ -263,6 +275,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~7%",
         "region": "Evanston, IL",
+        "dataDepth": "deep",
         "motto": "\"Quaecumque sunt vera\" — \"Whatsoever things are true.\"",
         "values": [
             "a specific \"why Northwestern\"",
@@ -284,6 +297,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~5%",
         "region": "Chicago, IL",
+        "dataDepth": "deep",
         "motto": "\"Crescat scientia; vita excolatur\" — \"Let knowledge grow from more to more; and so be human life enriched.\"",
         "values": [
             "intellectual playfulness",
@@ -303,6 +317,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~7%",
         "region": "Ithaca, NY",
+        "dataDepth": "deep",
         "motto": "\"I would found an institution where any person can find instruction in any study.\" — Ezra Cornell.",
         "values": [
             "fit with a specific college",
@@ -322,6 +337,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~8%",
         "region": "Houston, TX",
+        "dataDepth": "deep",
         "motto": "\"Letters, Science, Art.\" Rice is small, collaborative, and known for its residential-college culture.",
         "values": [
             "collaboration",
@@ -342,6 +358,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~5%",
         "region": "Nashville, TN",
+        "dataDepth": "deep",
         "motto": "\"Crescere Aude\" — \"Dare to grow.\"",
         "values": [
             "leadership",
@@ -362,6 +379,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~9%",
         "region": "Notre Dame, IN",
+        "dataDepth": "deep",
         "motto": "\"Vita, Dulcedo, Spes\" — \"Life, Sweetness, Hope.\" A Catholic university with a strong service and community identity.",
         "values": [
             "service",
@@ -381,6 +399,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~12%",
         "region": "Washington, DC",
+        "dataDepth": "deep",
         "motto": "\"Utraque Unum\" — \"Both into one.\" A Jesuit university strong in government, international affairs, and service.",
         "values": [
             "service (\"cura personalis\")",
@@ -402,6 +421,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~11%",
         "region": "Berkeley, CA",
+        "dataDepth": "deep",
         "motto": "\"Fiat Lux\" — \"Let there be light.\" A public research powerhouse.",
         "values": [
             "academic excellence",
@@ -422,6 +442,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~9%",
         "region": "Los Angeles, CA",
+        "dataDepth": "deep",
         "motto": "\"Fiat Lux\" — \"Let there be light.\" The most-applied-to university in the US.",
         "values": [
             "academic excellence",
@@ -443,6 +464,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~18%",
         "region": "Ann Arbor, MI",
+        "dataDepth": "deep",
         "motto": "\"Artes, Scientia, Veritas\" — \"Arts, Knowledge, Truth.\"",
         "values": [
             "academic rigor",
@@ -464,6 +486,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~17%",
         "region": "Chapel Hill, NC",
+        "dataDepth": "deep",
         "motto": "\"Lux Libertas\" — \"Light and Liberty.\" The oldest US public university.",
         "values": [
             "service and public good",
@@ -484,6 +507,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~11%",
         "region": "Pittsburgh, PA",
+        "dataDepth": "deep",
         "motto": "\"My heart is in the work.\" — Andrew Carnegie.",
         "values": [
             "depth in the intended program",
@@ -503,6 +527,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~13%",
         "region": "Atlanta, GA",
+        "dataDepth": "deep",
         "motto": "\"Cor prudentis possidebit scientiam\" — \"The wise heart seeks knowledge.\"",
         "values": [
             "intellectual curiosity",
@@ -524,6 +549,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~17%",
         "region": "Charlottesville, VA",
+        "dataDepth": "deep",
         "motto": "Founded by Thomas Jefferson on ideals of self-governance and honor; known for its student-run Honor System.",
         "values": [
             "character and honor",
@@ -546,6 +572,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~11%",
         "region": "St. Louis, MO",
+        "dataDepth": "deep",
         "motto": "\"Per veritatem vis\" — \"Strength through truth.\"",
         "values": [
             "demonstrated interest",
@@ -567,6 +594,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~10%",
         "region": "Los Angeles, CA",
+        "dataDepth": "deep",
         "motto": "\"Palmam qui meruit ferat\" — \"Let whoever earns the palm bear it.\"",
         "values": [
             "a distinctive talent or angle",
@@ -587,6 +615,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~12%",
         "region": "New York, NY",
+        "dataDepth": "deep",
         "motto": "\"Perstare et praestare\" — \"To persevere and to excel.\"",
         "values": [
             "genuine fit with NYU's global/urban identity",
@@ -605,6 +634,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~10%",
         "region": "Medford, MA",
+        "dataDepth": "deep",
         "motto": "\"Pax et Lux\" — \"Peace and Light.\" Known for its quirky, thoughtful supplemental essays.",
         "values": [
             "intellectual playfulness",
@@ -626,6 +656,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "~16%",
         "region": "Atlanta, GA",
+        "dataDepth": "deep",
         "motto": "\"Progress and Service.\"",
         "values": [
             "STEM rigor",
@@ -647,6 +678,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~13% (course-dependent)",
         "region": "Oxford, England",
+        "dataDepth": "deep",
         "motto": "\"Dominus illuminatio mea\" — \"The Lord is my light.\"",
         "values": [
             "deep subject knowledge",
@@ -668,6 +700,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~16% (course-dependent)",
         "region": "Cambridge, England",
+        "dataDepth": "deep",
         "motto": "\"Hinc lucem et pocula sacra\" — \"From here, light and sacred draughts\" (enlightenment and knowledge).",
         "values": [
             "exceptional subject ability",
@@ -689,6 +722,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~14% (course-dependent)",
         "region": "London, England",
+        "dataDepth": "deep",
         "motto": "Imperial retired its Latin motto in 2020; today it centres science, engineering, medicine, and business for real-world benefit.",
         "values": [
             "STEM excellence",
@@ -709,6 +743,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~9% (course-dependent)",
         "region": "London, England",
+        "dataDepth": "deep",
         "motto": "\"Rerum cognoscere causas\" — \"To understand the causes of things.\"",
         "values": [
             "analytical and quantitative ability",
@@ -729,6 +764,7 @@ SCHOOLS = [
         "tier": "reach",
         "accept": "~30% (course-dependent)",
         "region": "London, England",
+        "dataDepth": "deep",
         "motto": "\"Cuncti adsint meritaeque expectent praemia palmae\" — \"Let all come who by merit deserve the most reward.\" Founded as a secular, inclusive alternative to Oxbridge.",
         "values": [
             "academic ability in the chosen course",
@@ -749,6 +785,7 @@ SCHOOLS = [
         "tier": "target",
         "accept": "course-dependent",
         "region": "Edinburgh, Scotland",
+        "dataDepth": "deep",
         "motto": "\"Nec temere, nec timide\" — \"Neither rashly, nor timidly.\"",
         "values": [
             "academic ability in the chosen course",
@@ -758,6 +795,228 @@ SCHOOLS = [
         ],
         "guidance": "Edinburgh is a large, ancient, research-intensive UK university with course-specific admission driven mainly by grades and the personal statement (it generally does not interview for most subjects). As with all UK applications, make the statement overwhelmingly about your chosen subject and your academic readiness for it.",
         "acceptedPattern": "Admits show the required grades and a focused, subject-driven personal statement demonstrating genuine interest and independent thinking. Competitiveness varies significantly by course; academic fit is the recurring signal."
+    },
+    {
+        "name": "University of Texas at Austin",
+        "aka": [
+            "ut austin",
+            "university of texas",
+            "ut",
+            "texas",
+            "ut-austin"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~29% overall (far lower for top majors)",
+        "region": "Austin, TX",
+        "dataDepth": "deep",
+        "motto": "\"Disciplina Praesidium Civitatis\" — \"A cultivated mind is the guardian genius of democracy.\" A major public flagship with elite CS, business, and engineering.",
+        "values": [
+            "fit with the specific major",
+            "genuine depth in your field",
+            "a real 'why this major'",
+            "academic rigor"
+        ],
+        "guidance": "UT Austin admits BY MAJOR, and this is the single most important thing to understand: the ~29% overall rate is misleading because top programs (CS, McCombs business, engineering) are dramatically harder - CS's Turing honors reportedly denies 85% of valedictorians and competitive CS applicants rank top 1-3% with 1500+ SAT. Texas residents in the top ~6% get automatic admission to the university (not necessarily the major). Write the ApplyTexas Topic A personal statement plus a major-specific short answer that shows genuine curiosity about THAT field, not 'CS/business at any top school.'",
+        "acceptedPattern": "Admitted students to competitive majors show deep, specific experience in that exact field (real projects, research, competitions) plus top-percentile academics - and essays that engage the actual discipline (specific CS subareas, faculty research, real problems), not generic ambition. Generic 'why this major' essays are immediately less competitive. For non-impacted majors, a solid record and clear direction suffice."
+    },
+    {
+        "name": "University of California, San Diego (UCSD)",
+        "aka": [
+            "ucsd",
+            "uc san diego"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~25%",
+        "region": "La Jolla, CA",
+        "dataDepth": "deep",
+        "motto": "\"Fiat Lux\" — \"Let there be light.\" A top public research university (2nd in the world by some research measures) with a distinctive eight-college system.",
+        "values": [
+            "strong PIQs with specificity",
+            "academic and research focus",
+            "contribution and self-reflection",
+            "fit with a college theme"
+        ],
+        "guidance": "UCSD uses the UC application - four of eight Personal Insight Questions (350 words each), the SAME essays across every UC campus, no separate supplement. Since admitted students' academics are uniformly strong, the PIQs are your real differentiator: they reward specificity, genuine self-reflection, and even honest vulnerability (what you found hard, how you improved) over polished bragging. UCSD is especially strong in STEM, and its eight-college system rewards showing where you'd fit.",
+        "acceptedPattern": "Admits show strong GPAs plus PIQs with real specificity and reflection - a documented pattern is essays that reveal a genuine, sustained intellectual or community commitment (e.g. a student who led a marine-biology club, researched ocean acidification, and built underwater drones toward a clear goal). CS, engineering, and biology are the most competitive."
+    },
+    {
+        "name": "University of California, Davis (UC Davis)",
+        "aka": [
+            "uc davis",
+            "ucd",
+            "davis"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~37%",
+        "region": "Davis, CA",
+        "dataDepth": "deep",
+        "motto": "\"Fiat Lux\" — \"Let there be light.\" World-leading in veterinary medicine, agriculture, and environmental science.",
+        "values": [
+            "strong PIQs",
+            "academic focus",
+            "community contribution",
+            "fit with signature programs"
+        ],
+        "guidance": "UC Davis uses the UC application - four of eight Personal Insight Questions (350 words each), identical across all UC campuses. It's a well-rounded research university that's genuinely world-first in veterinary science, agriculture, and environmental studies. As with all UCs, the PIQs carry real weight and reward specificity and self-reflection; a clear academic direction (especially in its signature fields) helps.",
+        "acceptedPattern": "Admits show solid academics and PIQs conveying genuine interest and contribution. Applicants with real depth in Davis's standout areas (vet/ag/environmental/sustainability) stand out; the recurring signal is specificity and growth in the PIQs, not just stats."
+    },
+    {
+        "name": "University of California, Irvine (UC Irvine)",
+        "aka": [
+            "uc irvine",
+            "uci",
+            "irvine"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~25%",
+        "region": "Irvine, CA",
+        "dataDepth": "deep",
+        "motto": "\"Fiat Lux\" — \"Let there be light.\" A fast-rising research university strong in CS, biology, and public health.",
+        "values": [
+            "strong PIQs",
+            "academic focus in your field",
+            "contribution",
+            "self-reflection"
+        ],
+        "guidance": "UC Irvine uses the UC application - four of eight Personal Insight Questions (350 words each), identical across all UC campuses. It's rising fast and especially strong in computer science, biological sciences, and public health. The PIQs are the key differentiator among academically-strong applicants; write with specificity and genuine reflection, and show focus in your intended field (top majors are more competitive).",
+        "acceptedPattern": "Admits show strong academics and focused, specific PIQs. Competitiveness varies sharply by major - CS and biology are among the hardest - and the recurring signal is demonstrated interest plus reflective, specific essays."
+    },
+    {
+        "name": "University of California, Santa Barbara (UCSB)",
+        "aka": [
+            "ucsb",
+            "uc santa barbara"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~38%",
+        "region": "Santa Barbara, CA",
+        "dataDepth": "deep",
+        "motto": "\"Fiat Lux\" — \"Let there be light.\" A research university with standout physics, engineering, and materials science (and multiple Nobel laureates).",
+        "values": [
+            "strong PIQs",
+            "intellectual curiosity",
+            "empathy and contribution",
+            "academic focus"
+        ],
+        "guidance": "UCSB uses the UC application - four of eight Personal Insight Questions (350 words each), identical across all UC campuses. It has genuinely elite physics, engineering, and materials-science programs. UCSB specifically values students who will positively contribute to campus and show empathy alongside achievement; write PIQs with specificity and real reflection, and show genuine intellectual interest.",
+        "acceptedPattern": "Admits show solid academics and PIQs conveying real curiosity, contribution, and (UCSB emphasizes) empathy and character. Its top science/engineering programs are notably more competitive; specific, reflective essays recur."
+    },
+    {
+        "name": "University of Wisconsin-Madison",
+        "aka": [
+            "wisconsin",
+            "uw madison",
+            "university of wisconsin",
+            "uw-madison"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~43%",
+        "region": "Madison, WI",
+        "dataDepth": "deep",
+        "motto": "\"Numen Lumen\" (\"God, our light\"), but its living ethos is the \"Wisconsin Idea\": that university knowledge should improve people's lives beyond the classroom.",
+        "values": [
+            "the Wisconsin Idea (real-world impact)",
+            "academic rigor",
+            "genuine involvement",
+            "a clear direction"
+        ],
+        "guidance": "Wisconsin-Madison is a top public research university whose defining value is the \"Wisconsin Idea\" - knowledge applied for the public good, statewide and beyond. Its supplemental essay asks what you want to accomplish and how you'd contribute, so tie your interests to real-world impact. It reads for rigor plus genuine involvement; out-of-state and top majors (CS, business, engineering) are more competitive.",
+        "acceptedPattern": "Admits show strong academics plus genuine involvement, and the strongest essays connect the applicant's interests to real-world contribution consistent with the Wisconsin Idea. A clear sense of how you'd use your education recurs."
+    },
+    {
+        "name": "University of Illinois Urbana-Champaign (UIUC)",
+        "aka": [
+            "uiuc",
+            "university of illinois",
+            "illinois",
+            "u of i"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~45% overall (far lower for engineering/CS)",
+        "region": "Urbana-Champaign, IL",
+        "dataDepth": "deep",
+        "motto": "\"Learning and Labor.\" A public powerhouse with top-5-in-the-nation engineering and computer science.",
+        "values": [
+            "fit with the specific major",
+            "genuine technical depth",
+            "problem-solving",
+            "a real 'why this major'"
+        ],
+        "guidance": "UIUC admits BY MAJOR, and its world-class engineering and CS programs (Grainger College) are dramatically more competitive than the ~45% overall rate - CS admits are near the very top of the applicant pool. Apply directly to the major you want and write essays showing genuine, specific technical interest and real projects. A clear 'why this major and why UIUC' matters; generic ambition doesn't compete for the top programs.",
+        "acceptedPattern": "Admits to top engineering/CS programs show serious demonstrated technical depth - real projects, competitions, applied work - well beyond strong grades, plus essays engaging the specific field. For less-impacted majors, a solid record and clear direction suffice."
+    },
+    {
+        "name": "University of Washington (UW)",
+        "aka": [
+            "uw",
+            "university of washington",
+            "udub"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~43% overall (far lower for CS)",
+        "region": "Seattle, WA",
+        "dataDepth": "deep",
+        "motto": "\"Lux Sit\" — \"Let there be light.\" A major public research university with an elite CS program (the Allen School), plus top medicine and sciences.",
+        "values": [
+            "fit with the intended field",
+            "real engagement and impact",
+            "a clear direction",
+            "genuine reflection"
+        ],
+        "guidance": "UW is a leading public research university where the Allen School of Computer Science is extremely competitive and effectively a separate, much harder admit than the ~43% overall rate. It reads holistically with two required essays (a personal statement and a short response) that reward genuine reflection and real engagement. Show demonstrated depth in your field; top majors (CS especially) require serious evidence.",
+        "acceptedPattern": "Admits show strong academics and reflective essays showing real engagement or impact; CS/Allen School admits in particular show serious demonstrated technical depth. Fit with the intended field and authentic reflection recur."
+    },
+    {
+        "name": "University of Florida (UF)",
+        "aka": [
+            "uf",
+            "university of florida",
+            "florida"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~24%",
+        "region": "Gainesville, FL",
+        "dataDepth": "deep",
+        "motto": "\"Civium in moribus rei publicae salus\" — \"The welfare of the state depends on the character of its citizens.\" A top public flagship and an especially strong value.",
+        "values": [
+            "academic rigor",
+            "genuine involvement and leadership",
+            "a clear direction",
+            "contribution"
+        ],
+        "guidance": "UF is a highly-ranked public flagship, strong across the board, that has become notably more selective. It reads for academic rigor plus genuine, sustained involvement and leadership. Its application rewards clear direction and real contribution to your community; the competitive Honors Program and top majors ask for more demonstrated depth.",
+        "acceptedPattern": "Admits show strong academics with genuine involvement and leadership over time; the recurring signal is sustained commitment and contribution rather than a scattered activity list. Honors and top majors are more competitive."
+    },
+    {
+        "name": "Michigan State University",
+        "aka": [
+            "michigan state",
+            "msu",
+            "mich state"
+        ],
+        "country": "US",
+        "tier": "target",
+        "accept": "~83%",
+        "region": "East Lansing, MI",
+        "dataDepth": "deep",
+        "motto": "\"Advancing Knowledge. Transforming Lives.\" A large land-grant flagship, pioneer of the land-grant model, strong in education, supply chain, and the sciences.",
+        "values": [
+            "academic readiness",
+            "a clear direction",
+            "involvement",
+            "fit with the major/program"
+        ],
+        "guidance": "Michigan State is a large, accessible land-grant flagship (the original land-grant model) with a much higher overall admit rate, though its Honors College and top programs (supply-chain management, education, some sciences) are meaningfully more competitive. A solid academic record, a clear direction, and genuine involvement read well; it's a strong target/safety with real program strengths.",
+        "acceptedPattern": "Admits generally clear a solid GPA and course-rigor bar with a clear academic direction; Honors College and standout programs reward additional demonstrated depth and involvement."
     }
 ]
  
