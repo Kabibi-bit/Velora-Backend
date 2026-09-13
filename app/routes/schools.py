@@ -13,6 +13,8 @@ from app.services.schools import (
     admissions_deadline_context,
     admissions_assistant_context,
     admissions_readiness,
+    admissions_list_balance,
+    admissions_gap_radar,
 )
  
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -134,4 +136,41 @@ def schools_readiness(user_id: str, db: Session = Depends(get_db), _auth: dict =
     except Exception:
         pass
     return admissions_readiness(profile, signals)
+ 
+ 
+ 
+@router.get("/list-balance/{user_id}")
+def schools_list_balance(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """UNIQUE: is the student's school list realistic? An honest verdict on the
+    list SHAPE (reach/target/likely mix) plus the specific structural fix -
+    computed from verified tiers and the student's own readiness, not guessed."""
+    profile = _load_student_profile(user_id, db)
+    signals = {}
+    try:
+        from app.models.db_models import Application
+        signals["tracked_count"] = db.query(Application).filter(Application.user_id == user_id).count()
+    except Exception:
+        pass
+    result = admissions_list_balance(profile, signals)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No target schools we have data on are set on this profile")
+    return result
+ 
+ 
+@router.get("/gap-radar/{user_id}")
+def schools_gap_radar(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """UNIQUE: the single highest-leverage move that would strengthen the
+    student's standing across the MOST of their target schools at once -
+    whole-list optimization against their real profile."""
+    profile = _load_student_profile(user_id, db)
+    signals = {}
+    try:
+        from app.models.db_models import Application
+        signals["tracked_count"] = db.query(Application).filter(Application.user_id == user_id).count()
+    except Exception:
+        pass
+    result = admissions_gap_radar(profile, signals)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No target schools we have data on are set on this profile")
+    return result
  
