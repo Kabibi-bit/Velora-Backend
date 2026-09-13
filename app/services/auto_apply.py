@@ -333,8 +333,6 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
     """
     from app.models.db_models import Profile, Listing, OutreachEmail
     from app.services.email_send import guess_contact_emails
-    import os
-    import anthropic as anthropic_module
  
     profile = (
         db.query(Profile)
