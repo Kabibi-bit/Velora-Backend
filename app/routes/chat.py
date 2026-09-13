@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -72,12 +73,13 @@ def build_system_context(db: Session, user_id: str) -> str:
  
  
 @router.post("")
-def chat(payload: ChatIn, db: Session = Depends(get_db)):
+def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     system = build_system_context(db, payload.user_id)
     messages = payload.history + [{"role": "user", "content": payload.message}]
  
