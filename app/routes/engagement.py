@@ -1,7 +1,8 @@
 import os
 import secrets
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -36,7 +37,7 @@ class DraftIn(BaseModel):
  
  
 @router.post("/draft")
-def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db)):
+def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Drafts a real, thoughtful engagement question for a real post
     the person pasted in themselves - never scrapes or auto-posts,
     see app/services/engagement.py's module docstring for why.
@@ -48,6 +49,7 @@ def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
+    verify_token_belongs_to_user(payload.user_id, authorization)
  
     if not payload.post_content or not payload.post_content.strip():
         raise HTTPException(status_code=400, detail="post_content cannot be empty")
@@ -79,7 +81,7 @@ def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def list_suggestions(user_id: str, db: Session = Depends(get_db)):
+def list_suggestions(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -95,7 +97,7 @@ def list_suggestions(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/{suggestion_id}/send-email")
-def send_suggestion_email(suggestion_id: str, db: Session = Depends(get_db)):
+def send_suggestion_email(suggestion_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Emails the real, drafted suggestion to the person's own
     registered address, with a real, secure, single-use accept link -
     this is the "if the AI finds someone they like, they'll email the
@@ -114,6 +116,7 @@ def send_suggestion_email(suggestion_id: str, db: Session = Depends(get_db)):
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
  
+    verify_token_belongs_to_user(str(suggestion.user_id), authorization)
     user = db.query(User).filter(User.id == suggestion.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="No user found for this suggestion")
@@ -202,7 +205,7 @@ class DeclineIn(BaseModel):
  
  
 @router.post("/{suggestion_id}/decline")
-def decline_suggestion(suggestion_id: str, db: Session = Depends(get_db)):
+def decline_suggestion(suggestion_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(suggestion_id)
@@ -213,6 +216,7 @@ def decline_suggestion(suggestion_id: str, db: Session = Depends(get_db)):
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
  
+    verify_token_belongs_to_user(str(suggestion.user_id), authorization)
     suggestion.status = "declined"
     suggestion.responded_at = datetime.utcnow()
     suggestion.accept_token = None
@@ -226,7 +230,7 @@ class LogEntryIn(BaseModel):
  
  
 @router.post("/{suggestion_id}/log")
-def add_communication_log_entry(suggestion_id: str, payload: LogEntryIn, db: Session = Depends(get_db)):
+def add_communication_log_entry(suggestion_id: str, payload: LogEntryIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Records a real, user-entered update on what actually happened
     after posting - a reply they got, a follow-up question - the
     "response and questions and communication will all be considered
@@ -248,6 +252,7 @@ def add_communication_log_entry(suggestion_id: str, payload: LogEntryIn, db: Ses
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
  
+    verify_token_belongs_to_user(str(suggestion.user_id), authorization)
     log = list(suggestion.communication_log or [])
     log.append({"at": datetime.utcnow().isoformat(), "note": payload.note.strip()})
     suggestion.communication_log = log
