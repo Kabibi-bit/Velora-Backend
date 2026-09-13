@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
  
@@ -13,8 +13,8 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 class NotificationIn(BaseModel):
     user_id: str
     type: str
-    title: str
-    detail: str | None = None
+    title: str = Field(max_length=500)
+    detail: str | None = Field(default=None, max_length=2000)
  
  
 @router.post("")
