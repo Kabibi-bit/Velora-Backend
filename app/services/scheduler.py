@@ -413,6 +413,10 @@ def run_scan_for_all_users():
             print(f"Embeddings status check itself failed (non-fatal): {e}")
  
         users = db.query(User).join(Profile).filter(Profile.is_current == True).all()  # noqa: E712
+        # Load the listing set once per cycle - it's identical for every
+        # user in this pass, so re-querying it inside the loop was N
+        # redundant full-table loads. Fetched here and reused below.
+        all_listings_this_cycle = db.query(Listing).all()
         for user in users:
             # Isolated per-user, mirroring the exact same defensive
             # pattern already applied consistently everywhere else in
@@ -436,7 +440,7 @@ def run_scan_for_all_users():
                     .first()
                 )
                 if profile and profile.auto_apply_enabled:
-                    listings = db.query(Listing).all()
+                    listings = all_listings_this_cycle
                     from app.models.db_models import DismissedListing
                     dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user.id).all()}
                     ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10, dismissed_ids=dismissed_ids)
