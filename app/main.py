@@ -1,19 +1,38 @@
+import os
+import uuid as _uuid
 import traceback
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException as _HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
  
-from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, saved_listings, notifications, career_discovery, outreach, auth, social, athletics, market_research, resume, assistance, strategy, engagement
+from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, saved_listings, notifications, career_discovery, outreach, auth, social, athletics, market_research, resume, assistance, strategy, engagement, dismissed_listings
 from app.services.scheduler import start_scheduler
  
 load_dotenv()
  
 app = FastAPI(title="Scanline API")
  
+# CORS origins are configurable per environment via
+# VELORA_ALLOWED_ORIGINS (comma-separated). This replaces a wildcard
+# "*", which would let any website on the internet make authenticated
+# requests to this API on a logged-in user's behalf. Defaults cover
+# local dev and the known frontend host; set the env var in
+# production to your real domain(s).
+_default_origins = "http://localhost:8000,http://localhost:5173,http://127.0.0.1:8000"
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv("VELORA_ALLOWED_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
+ 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
+    # Bearer tokens travel in the Authorization header, not cookies,
+    # so credentialed CORS is not needed - and keeping it False is
+    # what makes a strict origin allowlist meaningful.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -38,6 +57,7 @@ app.include_router(resume.router)
 app.include_router(assistance.router)
 app.include_router(strategy.router)
 app.include_router(engagement.router)
+app.include_router(dismissed_listings.router)
  
 # system.py is a small, purely diagnostic router (the
 # /system/embeddings-status health check) - genuinely optional,
@@ -56,17 +76,26 @@ except Exception as e:
     print(f"system router (embeddings-status diagnostic endpoint) failed to load, continuing without it: {e}")
  
  
-# TEMPORARY DEBUG HANDLER: shows the real error directly in the API
-# response instead of only in Render's logs, so it's easy to read.
-# Remove this once things are working -- it can leak internal details.
+# Catches only genuinely unexpected server errors. The full traceback
+# is logged server-side (visible in Render's logs) for debugging, but
+# the client receives only a generic message plus a correlation id -
+# never the exception type, message, or stack trace, which could leak
+# internal details (file paths, query structure, library versions) to
+# an attacker. HTTPException is deliberately re-raised so intentional
+# status codes from the app (e.g. 401/403 from the auth layer, 404s)
+# reach the client unchanged instead of being masked as a 500.
 @app.exception_handler(Exception)
-async def debug_exception_handler(request: Request, exc: Exception):
+async def unexpected_error_handler(request: Request, exc: Exception):
+    if isinstance(exc, _HTTPException):
+        raise exc
+    error_id = str(_uuid.uuid4())
+    print(f"[unhandled error {error_id}] {type(exc).__name__}: {exc}")
+    print(traceback.format_exc())
     return JSONResponse(
         status_code=500,
         content={
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-            "traceback": traceback.format_exc(),
+            "detail": "An unexpected error occurred. Please try again.",
+            "error_id": error_id,
         },
     )
  
