@@ -11,6 +11,7 @@ data license or building partnerships with individual programs.
 import hashlib
  
 from fastapi import APIRouter, HTTPException, Depends
+from app.services.auth import require_valid_token
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import date
@@ -33,7 +34,7 @@ class ManualListingIn(BaseModel):
  
  
 @router.post("")
-def add_manual_listing(payload: ManualListingIn, db: Session = Depends(get_db)):
+def add_manual_listing(payload: ManualListingIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     if not payload.title.strip() or not payload.org.strip() or not payload.apply_url.strip():
         raise HTTPException(status_code=400, detail="title, org, and apply_url cannot be empty")
     # apply_url anchors this instead of title+org - a real, different
