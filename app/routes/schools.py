@@ -17,6 +17,9 @@ from app.services.schools import (
     admissions_gap_radar,
     build_readiness_snapshot,
     compute_trajectory,
+    derive_milestones,
+    compute_consistency,
+    weekly_focus,
 )
  
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -234,4 +237,29 @@ def schools_trajectory(user_id: str, db: Session = Depends(get_db), _auth: dict 
     )
     snaps = [{"created_at": r.created_at, "avg": r.avg, "evidence": r.evidence or {}} for r in rows]
     return compute_trajectory(snaps, profile)
+ 
+ 
+ 
+@router.get("/journey/{user_id}")
+def schools_journey(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """THE compounding x-factor, in one call: the student's trajectory, the
+    milestones they've earned, their consistency/streak, and this week's adaptive
+    focus. All derived from their persisted snapshot history - the richness grows
+    the longer they use the app, which no stateless assistant can match."""
+    from app.models.db_models import AdmissionsSnapshot
+    profile = _load_student_profile(user_id, db)
+    rows = (
+        db.query(AdmissionsSnapshot)
+        .filter(AdmissionsSnapshot.user_id == user_id)
+        .order_by(AdmissionsSnapshot.created_at.asc())
+        .all()
+    )
+    snaps = [{"created_at": r.created_at, "avg": r.avg, "evidence": r.evidence or {}} for r in rows]
+    signals = _snapshot_signals(user_id, db)
+    return {
+        "trajectory": compute_trajectory(snaps, profile),
+        "milestones": derive_milestones(snaps),
+        "consistency": compute_consistency(snaps),
+        "weekly_focus": weekly_focus(profile, snaps, signals),
+    }
  
