@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -24,7 +25,7 @@ class AcceptIn(BaseModel):
  
  
 @router.post("/accept")
-def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
+def accept_match(payload: AcceptIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """The one-click 'I accept this match' action - this is also what
     fires automatically when a user stars a listing (see /saved in
     saved_listings.py). Computes the real match score, drafts a
@@ -36,6 +37,7 @@ def accept_match(payload: AcceptIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -63,7 +65,7 @@ class DraftIn(BaseModel):
  
  
 @router.post("/draft")
-def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
+def create_draft(payload: DraftIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Drafts an application and decides auto-send vs review, based on
     the confidence score you pass in (use the score from /listings/matches).
     Kept for manual/testing use - /accept is the real one-click path.
@@ -75,6 +77,7 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
+    verify_token_belongs_to_user(payload.user_id, authorization)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -134,7 +137,7 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def list_applications(user_id: str, db: Session = Depends(get_db)):
+def list_applications(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Lists all drafted applications for a user - this is what backs
     the frontend's Workshop page.
     """
@@ -172,7 +175,7 @@ def list_applications(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/{application_id}/approve")
-def approve_application(application_id: str, db: Session = Depends(get_db)):
+def approve_application(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     """For applications sitting in pending_review - the human approval step."""
     import uuid as uuid_module
     try:
@@ -182,6 +185,7 @@ def approve_application(application_id: str, db: Session = Depends(get_db)):
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
     app_record.status = "approved"
     app_record.sendable_at = compute_sendable_at()
     db.commit()
@@ -189,7 +193,7 @@ def approve_application(application_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/{application_id}/send")
-def send_application(application_id: str, db: Session = Depends(get_db)):
+def send_application(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Marks an application as sent, only if approved and the undo
     window has passed. NOTE: this does not submit anything to a real
     job site -- see the honest limitation noted in auto_apply.py.
@@ -202,6 +206,7 @@ def send_application(application_id: str, db: Session = Depends(get_db)):
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
     if app_record.status != "approved":
         raise HTTPException(status_code=400, detail="Application is not approved yet")
     if app_record.sendable_at and datetime.utcnow() < app_record.sendable_at:
@@ -215,7 +220,7 @@ def send_application(application_id: str, db: Session = Depends(get_db)):
  
  
 @router.post("/{application_id}/undo")
-def undo_application(application_id: str, db: Session = Depends(get_db)):
+def undo_application(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(application_id)
@@ -224,6 +229,7 @@ def undo_application(application_id: str, db: Session = Depends(get_db)):
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
     if app_record.status == "sent":
         raise HTTPException(status_code=400, detail="Already sent, cannot undo")
     app_record.status = "undone"
@@ -232,7 +238,7 @@ def undo_application(application_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{application_id}/explain-outcome")
-def explain_outcome(application_id: str, db: Session = Depends(get_db)):
+def explain_outcome(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
     """The rejection/ghost autopsy - a real, specific comparison of what
     was actually sent against the actual listing, grounded in the real
     outcome logged for it. Requires an outcome to already be logged via
@@ -253,6 +259,7 @@ def explain_outcome(application_id: str, db: Session = Depends(get_db)):
     app_record = db.query(Application).filter(Application.id == application_id).first()
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
  
     outcome = (
         db.query(Outcome)
@@ -292,7 +299,7 @@ SAME_COMPANY_CAUTION_THRESHOLD = 3
  
  
 @router.get("/{user_id}/company-concentration")
-def get_company_concentration(user_id: str, db: Session = Depends(get_db)):
+def get_company_concentration(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Surfaces companies the person has applied to enough times that a
     further application starts reading as spray-pattern in an ATS -
     the concrete answer to the documented etiquette line (~2-3
