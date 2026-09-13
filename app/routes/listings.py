@@ -386,7 +386,7 @@ def guess_contact_email(user_id: str, listing_id: str, db: Session = Depends(get
  
  
 class SendOutreachIn(BaseModel):
-    to_address: str
+    to_address: str = Field(max_length=300)
     subject: str = Field(max_length=500)
     body: str = Field(max_length=10000)
     address_verified: bool = False
