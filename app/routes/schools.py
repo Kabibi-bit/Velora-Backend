@@ -20,6 +20,8 @@ from app.services.schools import (
     derive_milestones,
     compute_consistency,
     weekly_focus,
+    polish_analyze,
+    brainstorm_outline,
 )
  
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -262,4 +264,31 @@ def schools_journey(user_id: str, db: Session = Depends(get_db), _auth: dict = D
         "consistency": compute_consistency(snaps),
         "weekly_focus": weekly_focus(profile, snaps, signals),
     }
+ 
+ 
+ 
+@router.post("/essay-polish/{user_id}")
+def schools_essay_polish(user_id: str, payload: dict = Body(default={}), db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """The honest humanizer: analyze the STUDENT'S OWN essay draft for clichés,
+    AI-tells, vague words, and school-format misfit, returning concrete revision
+    feedback. Does NOT rewrite the essay and is NOT a detector-evasion tool -
+    the student revises in their own voice. Body: {'text': '<the draft>'}."""
+    profile = _load_student_profile(user_id, db)
+    text = ""
+    if isinstance(payload, dict):
+        text = str(payload.get("text", ""))[:20000]
+    if len(text.strip()) < 120:
+        raise HTTPException(status_code=400, detail="Provide at least a few sentences of the draft to analyze")
+    return {"report": polish_analyze(text, profile)}
+ 
+ 
+@router.post("/essay-brainstorm/{user_id}")
+def schools_essay_brainstorm(user_id: str, payload: dict = Body(default={}), db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """Assemble the student's OWN answers into a personal essay outline - helps
+    them write a real essay without writing it for them. Body may include
+    'moment', 'struggle', 'did', 'changed' (their answers)."""
+    profile = _load_student_profile(user_id, db)
+    answers = payload if isinstance(payload, dict) else {}
+    answers = {k: str(answers.get(k, ""))[:2000] for k in ("moment", "struggle", "did", "changed")}
+    return brainstorm_outline(profile, answers)
  
