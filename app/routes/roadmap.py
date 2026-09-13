@@ -1,6 +1,7 @@
 import os
 import re
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -58,7 +59,7 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
  
  
 @router.post("/{user_id}")
-def create_roadmap(user_id: str, db: Session = Depends(get_db)):
+def create_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Generates a fresh, detailed roadmap: an overall strategy summary
     plus 4-6 milestones, each with success criteria, a timeframe, a
     first action, a concrete resource, and the specific risk of
@@ -113,7 +114,7 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db)):
  
  
 @router.get("/{user_id}")
-def get_roadmap(user_id: str, db: Session = Depends(get_db)):
+def get_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -160,7 +161,7 @@ VALID_MILESTONE_STATUSES = {"planned", "in_progress", "done"}
  
  
 @router.post("/milestone/{milestone_id}/status")
-def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db)):
+def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Marks real progress on one milestone - this is what makes the
     roadmap a living plan instead of a one-time AI output.
  
@@ -185,6 +186,9 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
     milestone = db.query(RoadmapMilestone).filter(RoadmapMilestone.id == milestone_id).first()
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
+    # Only a milestone_id in the path, so verify the token against the
+    # milestone's real owner before mutating it.
+    verify_token_belongs_to_user(str(milestone.user_id), authorization)
     milestone.status = payload.status
  
     journal_entry_id = None
@@ -202,7 +206,7 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
  
  
 @router.get("/{user_id}/explain/{listing_id}")
-def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)):
+def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Returns Claude's explanation of how one specific listing fits
     the user's stored roadmap.
     """
