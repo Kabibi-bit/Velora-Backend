@@ -1,5 +1,6 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends
+from app.services.auth import require_auth_for_user
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -12,7 +13,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 @router.get("/{user_id}/position")
-def get_strategic_position(user_id: str, db: Session = Depends(get_db)):
+def get_strategic_position(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """The real, new synthesis this platform has never had - not
     another per-listing match score, but an honest read on where a
     person genuinely stands given everything they've actually done,
