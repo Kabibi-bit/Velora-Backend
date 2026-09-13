@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
+from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -22,7 +23,7 @@ class DiscoveryAnswersIn(BaseModel):
  
  
 @router.post("")
-def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db)):
+def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db), authorization: str = Header(None)):
     """Scores the assessment against real stored listings (not just
     static descriptions), and saves the result so it persists.
     """
@@ -31,6 +32,7 @@ def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db))
         uuid_module.UUID(payload.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    verify_token_belongs_to_user(payload.user_id, authorization)
  
     answers = {"people": payload.people, "data": payload.data, "creative": payload.creative, "structure": payload.structure, "free_text": payload.free_text}
     listings = db.query(Listing).all()
@@ -49,7 +51,7 @@ def submit_discovery(payload: DiscoveryAnswersIn, db: Session = Depends(get_db))
  
  
 @router.get("/{user_id}")
-def get_discovery(user_id: str, db: Session = Depends(get_db)):
+def get_discovery(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
@@ -66,7 +68,7 @@ class ExplainDirectionIn(BaseModel):
  
  
 @router.post("/{user_id}/explain")
-def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = Depends(get_db)):
+def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """On-demand, real Claude explanation for one direction - only
     called when someone actually wants more than the instant score,
     same cost-conscious pattern as the deep match explanation.
