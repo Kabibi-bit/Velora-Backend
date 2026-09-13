@@ -18,9 +18,9 @@ VALID_DIRECTIONS = {"play-college", "go-pro", "coach", "sports-management"}
  
  
 class ContentPlanIn(BaseModel):
-    sport: str
-    level: str
-    career_direction: str
+    sport: str = Field(max_length=100)
+    level: str = Field(max_length=100)
+    career_direction: str = Field(max_length=100)
     achievements: str = Field(default="", max_length=4000)
  
  
@@ -51,9 +51,9 @@ def content_coach(payload: ContentPlanIn, _auth: dict = Depends(require_valid_to
  
  
 class ProgramResearchIn(BaseModel):
-    sport: str
-    level: str
-    program_name: str
+    sport: str = Field(max_length=100)
+    level: str = Field(max_length=100)
+    program_name: str = Field(max_length=300)
  
  
 @router.post("/research-program")
@@ -87,8 +87,8 @@ class EventIn(BaseModel):
     event_type: str
     event_date: date | None = None
     roadmap_stage: int | None = None
-    roadmap_stage_title: str | None = None
-    notes: str | None = None
+    roadmap_stage_title: str | None = Field(default=None, max_length=300)
+    notes: str | None = Field(default=None, max_length=4000)
  
  
 @router.post("/events")
@@ -188,14 +188,14 @@ def delete_event(event_id: str, db: Session = Depends(get_db), authorization: st
  
 class CoachOutreachIn(BaseModel):
     user_id: str
-    sport: str
-    level: str
-    career_direction: str
+    sport: str = Field(max_length=100)
+    level: str = Field(max_length=100)
+    career_direction: str = Field(max_length=100)
     achievements: str = Field(default="", max_length=4000)
     target_description: str = Field(max_length=2000)
     org_name: str = Field(max_length=300)
     roadmap_stage: int | None = None
-    roadmap_stage_title: str | None = None
+    roadmap_stage_title: str | None = Field(default=None, max_length=300)
  
  
 @router.post("/outreach")
@@ -279,9 +279,9 @@ def list_outreach(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
  
  
 class EditOutreachIn(BaseModel):
-    subject: str | None = None
-    body: str | None = None
-    to_address: str | None = None
+    subject: str | None = Field(default=None, max_length=500)
+    body: str | None = Field(default=None, max_length=10000)
+    to_address: str | None = Field(default=None, max_length=300)
  
  
 @router.patch("/outreach/{outreach_id}")
@@ -333,9 +333,9 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization
  
  
 class ClipEditPlanIn(BaseModel):
-    sport: str
-    level: str
-    career_direction: str
+    sport: str = Field(max_length=100)
+    level: str = Field(max_length=100)
+    career_direction: str = Field(max_length=100)
     clips_description: str = Field(max_length=4000)
  
  
@@ -363,9 +363,9 @@ def edit_plan(payload: ClipEditPlanIn, _auth: dict = Depends(require_valid_token
  
 class AthleteRoadmapIn(BaseModel):
     user_id: str
-    sport: str
-    level: str
-    career_direction: str
+    sport: str = Field(max_length=100)
+    level: str = Field(max_length=100)
+    career_direction: str = Field(max_length=100)
     achievements: str = Field(default="", max_length=4000)
  
  
