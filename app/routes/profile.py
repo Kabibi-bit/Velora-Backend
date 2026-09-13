@@ -27,6 +27,12 @@ class SurveyIn(BaseModel):
     level: str | None = Field(default=None, max_length=100)
     career_direction: str | None = Field(default=None, max_length=100)
     achievements: str | None = Field(default=None, max_length=4000)
+    is_student: bool = False
+    intended_major: str | None = Field(default=None, max_length=200)
+    grade_level: str | None = Field(default=None, max_length=100)
+    target_schools: str | None = Field(default=None, max_length=1000)
+    interests: str | None = Field(default=None, max_length=2000)
+    student_achievements: str | None = Field(default=None, max_length=4000)
  
     @field_validator("northstar")
     @classmethod
@@ -131,6 +137,12 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
         level=payload.level,
         career_direction=payload.career_direction,
         achievements=payload.achievements,
+        is_student=payload.is_student,
+        intended_major=payload.intended_major,
+        grade_level=payload.grade_level,
+        target_schools=payload.target_schools,
+        interests=payload.interests,
+        student_achievements=payload.student_achievements,
         is_current=True,
     )
     db.add(new_profile)
@@ -182,6 +194,12 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db), _auth: dict
         "level": profile.level,
         "career_direction": profile.career_direction,
         "achievements": profile.achievements,
+        "is_student": profile.is_student,
+        "intended_major": profile.intended_major,
+        "grade_level": profile.grade_level,
+        "target_schools": profile.target_schools,
+        "interests": profile.interests,
+        "student_achievements": profile.student_achievements,
     }
  
  
