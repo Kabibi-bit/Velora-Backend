@@ -1,5 +1,4 @@
 import os
-import re
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
@@ -9,7 +8,7 @@ import anthropic
 from app.db import get_db
 from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary, SocialPost
 from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
-from app.services.matching import rank_listings, _terms_match
+from app.services.matching import rank_listings, _terms_match, tokenize
  
 router = APIRouter(prefix="/roadmap", tags=["roadmap"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -46,8 +45,8 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
     ]
     ranked = rank_listings(listing_dicts, profile_dict, top_n=8)
  
-    skill_tokens = re.findall(r"[a-z][a-z\-]{2,}", profile_dict.get("skills", "").lower())
-    goal_tokens = re.findall(r"[a-z][a-z\-]{2,}", (profile_dict["northstar"] + " " + profile_dict.get("final_idea", "")).lower())
+    skill_tokens = tokenize(profile_dict.get("skills", "") or "")
+    goal_tokens = tokenize((profile_dict["northstar"] + " " + profile_dict.get("final_idea", "")) or "")
  
     freq = {}
     for listing in ranked:
