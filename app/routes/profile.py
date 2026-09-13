@@ -1,6 +1,6 @@
 import re
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
  
@@ -13,20 +13,20 @@ router = APIRouter(prefix="/profile", tags=["profile"])
  
 class SurveyIn(BaseModel):
     user_id: str
-    northstar: str
-    final_idea: str | None = None
-    timeframe: str
-    stage: str
-    priorities: list[str]
-    skills: str
-    dealbreakers: str | None = None
-    location_pref: str | None = None
-    target_types: list[str]
+    northstar: str = Field(max_length=2000)
+    final_idea: str | None = Field(default=None, max_length=2000)
+    timeframe: str = Field(max_length=100)
+    stage: str = Field(max_length=100)
+    priorities: list[str] = Field(max_length=50)
+    skills: str = Field(max_length=2000)
+    dealbreakers: str | None = Field(default=None, max_length=2000)
+    location_pref: str | None = Field(default=None, max_length=200)
+    target_types: list[str] = Field(max_length=50)
     is_athlete: bool = False
-    sport: str | None = None
-    level: str | None = None
-    career_direction: str | None = None
-    achievements: str | None = None
+    sport: str | None = Field(default=None, max_length=100)
+    level: str | None = Field(default=None, max_length=100)
+    career_direction: str | None = Field(default=None, max_length=100)
+    achievements: str | None = Field(default=None, max_length=4000)
  
     @field_validator("northstar")
     @classmethod
