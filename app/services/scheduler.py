@@ -34,6 +34,7 @@ from app.services.ingestion import (
     fetch_simplify_internships, parse_simplify_markdown,
     discover_scholarships_via_search, normalize_scholarship_from_search, _scholarship_passes_quality_check,
     fetch_athletic_career_jobs, normalize_athletic_job, ATHLETIC_CAREER_QUERIES,
+    fetch_admissions_opportunities, normalize_admissions_opportunity, ADMISSIONS_OPPORTUNITY_QUERIES,
     check_and_reserve_quota, ADZUNA_DAILY_CALL_LIMIT,
 )
 from app.services.matching import rank_listings
@@ -146,7 +147,7 @@ async def _pull_and_store_new_listings(db: Session):
     regardless of what's already been consumed.
     """
     stored_count = 0
-    total_possible_queries = len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES)
+    total_possible_queries = len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES) + len(ADMISSIONS_OPPORTUNITY_QUERIES)
     reserved_calls = check_and_reserve_quota(db, "adzuna", calls_needed=total_possible_queries, daily_limit=ADZUNA_DAILY_CALL_LIMIT)
     # Proportional split, not a hard job-queries-first priority - direct
     # testing showed the hard-priority version completely zeroed out
@@ -160,11 +161,13 @@ async def _pull_and_store_new_listings(db: Session):
     # source that silently stops updating.
     if reserved_calls >= total_possible_queries:
         job_query_budget, athletic_query_budget = len(JOB_SEARCH_QUERIES), len(ATHLETIC_CAREER_QUERIES)
+        admissions_query_budget = len(ADMISSIONS_OPPORTUNITY_QUERIES)
     else:
         job_query_budget = min(round(reserved_calls * len(JOB_SEARCH_QUERIES) / total_possible_queries), reserved_calls)
-        athletic_query_budget = reserved_calls - job_query_budget
+        athletic_query_budget = min(round(reserved_calls * len(ATHLETIC_CAREER_QUERIES) / total_possible_queries), reserved_calls - job_query_budget)
+        admissions_query_budget = reserved_calls - job_query_budget - athletic_query_budget
     if reserved_calls < total_possible_queries:
-        print(f"Adzuna daily quota reached or nearly reached - running {reserved_calls} of {total_possible_queries} possible queries today ({job_query_budget} job, {athletic_query_budget} athletic).")
+        print(f"Adzuna daily quota reached or nearly reached - running {reserved_calls} of {total_possible_queries} possible queries today ({job_query_budget} job, {athletic_query_budget} athletic, {admissions_query_budget} admissions).")
  
     # Source 1: Adzuna, for jobs - queried across every category in
     # JOB_SEARCH_QUERIES, not just one hardcoded term, then merged
@@ -311,6 +314,39 @@ async def _pull_and_store_new_listings(db: Session):
             stored_count += 1
     except Exception as e:
         print(f"Athletic-career job ingestion failed (non-fatal): {e}")
+ 
+    # Source 5: Admissions opportunities (internships, research, pre-college,
+    # volunteer/leadership programs) - real data via the same Adzuna
+    # connection, queried with student-focused terms. The honest
+    # alternative to a dedicated competitions/extracurriculars API, exactly
+    # mirroring the athletic source above.
+    try:
+        raw_admissions = await fetch_admissions_opportunities(max_queries=admissions_query_budget)
+        admissions_normalized = dedupe_listings([normalize_admissions_opportunity(r) for r in raw_admissions])
+        for item in admissions_normalized:
+            exists = (
+                db.query(Listing)
+                .filter(Listing.source == item["source"], Listing.external_id == item["external_id"])
+                .first()
+            )
+            if exists:
+                continue
+            try:
+                tags = await extract_tags(item["description"], anthropic_client)
+            except Exception as e:
+                print(f"  Tag extraction failed for '{item['title']}', storing with no tags rather than losing it: {e}")
+                tags = []
+            tags = list(set(tags + ["admissions"]))  # ensure it's always discoverable by the admissions filter
+            db.add(Listing(
+                source=item["source"], external_id=item["external_id"], title=item["title"],
+                org=item["org"], type=item["type"], location=item["location"],
+                description=item["description"], tags=tags, deadline=item["deadline"],
+                apply_url=item["apply_url"],
+                embedding=_embed_listing(item["title"], item["description"], tags),
+            ))
+            stored_count += 1
+    except Exception as e:
+        print(f"Admissions opportunity ingestion failed (non-fatal): {e}")
  
     db.commit()
     return stored_count
