@@ -111,24 +111,42 @@ _TIER_BUDGET_ACTION = "_ai_daily_budget"
  
  
 def rate_limit_by_tier(db: Session, user_id: str, action: str, per_action_limit: int = DEFAULT_DAILY_LIMIT) -> None:
-    """Enforce BOTH a per-action ceiling and the user's tier-wide daily AI budget.
+    """Enforce a PER-FEATURE daily cap that scales by tier, plus a tier-wide
+    daily AI budget backstop.
  
-    - `per_action_limit`: max uses of THIS specific action per day (anti-abuse).
-    - tier budget: max total AI actions per day across all features, from the
-      user's plan (tiers.TIER_LIMITS). 'max' tier (>=1000) is treated as
-      effectively unlimited and the shared budget is skipped.
+    - per-feature cap: from tiers.feature_daily_cap(tier, action) - e.g. a Free
+      user gets 3 roadmaps/day, Pro 25, Max unlimited. This is the primary,
+      prudent limit and it differs by plan.
+    - `per_action_limit`: an optional absolute hard ceiling (anti-abuse), applied
+      in addition; whichever is stricter wins.
+    - tier budget: overall cap across ALL features (a backstop for abnormal use).
  
-    Call this at the top of any AI-backed endpoint instead of rate_limit().
+    Call this at the top of any AI-backed endpoint. Fails OPEN on any internal
+    error so a limiter fault never breaks the feature.
     """
-    # 1. Per-action ceiling (unchanged behaviour).
-    rate_limit(db, user_id, action, limit_per_day=per_action_limit)
+    tier = user_id_tier(db, user_id)
  
-    # 2. Tier-wide shared daily budget.
+    # 1. Per-feature, per-tier cap (primary). 1000+ == effectively unlimited.
+    try:
+        from app.services.tiers import feature_daily_cap
+        feat_cap = feature_daily_cap(tier, action)
+    except Exception:
+        feat_cap = None
+    if feat_cap is not None and feat_cap < 1000:
+        # the stricter of the tier's feature cap and any absolute ceiling
+        effective = min(feat_cap, per_action_limit) if per_action_limit else feat_cap
+        rate_limit(db, user_id, action, limit_per_day=effective)
+    elif feat_cap is None:
+        # unknown feature: fall back to the passed ceiling
+        rate_limit(db, user_id, action, limit_per_day=per_action_limit)
+    # (feat_cap >= 1000 -> unlimited for this feature at this tier; no per-action cap)
+ 
+    # 2. Tier-wide shared daily budget backstop.
     try:
         from app.services.tiers import daily_limit as _tier_daily_limit
-        budget = _tier_daily_limit(user_id_tier(db, user_id))
+        budget = _tier_daily_limit(tier)
     except Exception:
-        return  # fail open: can't determine budget -> don't block
+        return  # fail open
     if budget >= 1000:
         return  # effectively unlimited (Max); skip the shared cap
     # Count one against the shared bucket and block if over the tier budget.
