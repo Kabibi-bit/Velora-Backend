@@ -5,6 +5,7 @@ from app.services.auth import require_auth_for_user, verify_token_belongs_to_use
 from app.services.tiers import require_feature
 from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
+from typing import Optional
 from sqlalchemy.orm import Session
 import anthropic
  
@@ -20,6 +21,7 @@ VALID_DIRECTIONS = {"play-college", "go-pro", "coach", "sports-management"}
  
  
 class ContentPlanIn(BaseModel):
+    user_id: Optional[str] = None
     sport: str = Field(max_length=100)
     level: str = Field(max_length=100)
     career_direction: str = Field(max_length=100)
@@ -27,7 +29,7 @@ class ContentPlanIn(BaseModel):
  
  
 @router.post("/content-coach")
-def content_coach(payload: ContentPlanIn, _auth: dict = Depends(require_valid_token)):
+def content_coach(payload: ContentPlanIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """Generates real, grounded recruiting content guidance - a
     highlight reel structure, commonly-evaluated skills/metrics for
     this sport and level, specific drills to practice, and a filming
@@ -37,6 +39,8 @@ def content_coach(payload: ContentPlanIn, _auth: dict = Depends(require_valid_to
     data has stayed frontend-only so far, an honest gap rather than
     something silently assumed to exist.
     """
+    if payload.user_id:
+        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -53,18 +57,21 @@ def content_coach(payload: ContentPlanIn, _auth: dict = Depends(require_valid_to
  
  
 class ProgramResearchIn(BaseModel):
+    user_id: Optional[str] = None
     sport: str = Field(max_length=100)
     level: str = Field(max_length=100)
     program_name: str = Field(max_length=300)
  
  
 @router.post("/research-program")
-def research_program(payload: ProgramResearchIn, _auth: dict = Depends(require_valid_token)):
+def research_program(payload: ProgramResearchIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """The real-search upgrade: gives Claude the actual Anthropic web
     search tool to find and cite genuine, current public information
     about a specific named program, rather than general knowledge.
     Reports plainly when search doesn't turn up anything specific.
     """
+    if payload.user_id:
+        rate_limit_by_tier(db, payload.user_id, "company-research", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -337,6 +344,7 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization
  
  
 class ClipEditPlanIn(BaseModel):
+    user_id: Optional[str] = None
     sport: str = Field(max_length=100)
     level: str = Field(max_length=100)
     career_direction: str = Field(max_length=100)
@@ -344,12 +352,14 @@ class ClipEditPlanIn(BaseModel):
  
  
 @router.post("/edit-plan")
-def edit_plan(payload: ClipEditPlanIn, _auth: dict = Depends(require_valid_token)):
+def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """Not real video editing or processing - there's no video hosting
     infrastructure in this stack. This is a real, specific edit PLAN
     grounded in the athlete's own description of their footage, for
     them to execute in whatever editor they already use.
     """
+    if payload.user_id:
+        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -380,6 +390,7 @@ def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_
     candidate roadmap endpoint.
     """
     verify_token_belongs_to_user(payload.user_id, authorization)
+    rate_limit_by_tier(db, payload.user_id, "athlete-roadmap", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
