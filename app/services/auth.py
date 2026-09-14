@@ -13,14 +13,22 @@ private, the most directly contradictory gap), not silently implied
 to be done everywhere.
 """
 import os
+from app.services.timeutil import utcnow
 from fastapi import HTTPException, Header
 import bcrypt
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
  
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 24 * 14  # 14 days
+# Auth-token lifetime. Was 14 days, which is a long exposure window if a token
+# leaks. Shortened to 3 days by default - a meaningful security improvement that
+# still avoids forcing users to log in constantly. Override with JWT_EXPIRY_HOURS
+# in the environment (e.g. tune up for convenience, down for stricter security).
+try:
+    JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", str(24 * 3)))
+except (ValueError, TypeError):
+    JWT_EXPIRY_HOURS = 24 * 3
  
  
 def hash_password(password: str) -> str:
@@ -63,8 +71,8 @@ def create_access_token(user_id: str, role: str) -> str:
     payload = {
         "sub": user_id,
         "role": role,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
-        "iat": datetime.utcnow(),
+        "exp": utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": utcnow(),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
  
