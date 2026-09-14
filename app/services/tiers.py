@@ -69,6 +69,16 @@ FEATURE_DAILY_CAPS = {
     "essay-brainstorm":   {"free": 5,  "pro": 50,  "max": 1000},
     "outreach-draft":     {"free": 0,  "pro": 40,  "max": 1000},  # 0 = gated (Pro+ feature)
     "deep-explain":       {"free": 0,  "pro": 80,  "max": 1000},  # 0 = gated (Pro+ feature)
+    # Free features, but AI-costly - metered so Free can't run unlimited cost.
+    # Generous free allowances since these are part of the free experience.
+    "metis-chat":         {"free": 25, "pro": 200, "max": 1000},
+    "company-research":   {"free": 8,  "pro": 60,  "max": 1000},
+    "interview-prep":     {"free": 5,  "pro": 50,  "max": 1000},
+    "application-draft":  {"free": 8,  "pro": 60,  "max": 1000},
+    "explain-outcome":    {"free": 10, "pro": 80,  "max": 1000},
+    "engagement-draft":   {"free": 8,  "pro": 60,  "max": 1000},
+    "athlete-content":    {"free": 8,  "pro": 60,  "max": 1000},
+    "athlete-roadmap":    {"free": 3,  "pro": 25,  "max": 1000},
 }
  
 # Overall daily AI budget across ALL features (a backstop, not the primary cap).
