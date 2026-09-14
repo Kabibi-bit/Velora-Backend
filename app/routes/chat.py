@@ -1,6 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
@@ -80,6 +81,7 @@ def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = He
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
     verify_token_belongs_to_user(payload.user_id, authorization)
+    rate_limit_by_tier(db, payload.user_id, "metis-chat", per_action_limit=300)
     system = build_system_context(db, payload.user_id)
     messages = payload.history + [{"role": "user", "content": payload.message}]
  
