@@ -54,10 +54,10 @@ def tokenize(text: str) -> list[str]:
     separately as whole words rather than lowering the general
     minimum and reintroducing noise-word pollution.
     """
-    tokens = re.findall(r"[a-z][a-z\-]{2,}", text.lower())
+    tokens = re.findall(r"[a-z][a-z\-]{2,}", (text or "").lower())
     short_terms = {t for group in SYNONYM_GROUPS for t in group if len(t) <= 2}
     if short_terms:
-        text_lower = text.lower()
+        text_lower = (text or "").lower()
         for term in short_terms:
             if re.search(rf"\b{re.escape(term)}\b", text_lower):
                 tokens.append(term)
@@ -76,7 +76,7 @@ def _word_boundary_contains(haystack: str, needle: str) -> bool:
     of a match (if any) non-alphanumeric, regardless of what specific
     character it is.
     """
-    if not needle:
+    if not needle or not haystack:
         return False
     idx = haystack.find(needle)
     while idx != -1:
@@ -108,6 +108,8 @@ def _terms_match(a: str, b: str) -> bool:
     Fixed with the same word-boundary principle already used for the
     dealbreaker fix (_has_dealbreaker).
     """
+    if a is None or b is None:
+        return False
     if a == b:
         return True
     if _word_boundary_contains(a, b) or _word_boundary_contains(b, a):
