@@ -1,6 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
@@ -59,6 +60,7 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
  
 @router.post("/{user_id}")
 def create_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    rate_limit(db, user_id, "roadmap-generate", limit_per_day=20)
     """Generates a fresh, detailed roadmap: an overall strategy summary
     plus 4-6 milestones, each with success criteria, a timeframe, a
     first action, a concrete resource, and the specific risk of
@@ -206,6 +208,7 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
  
 @router.get("/{user_id}/explain/{listing_id}")
 def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    rate_limit(db, user_id, "roadmap-explain", limit_per_day=60)
     """Returns Claude's explanation of how one specific listing fits
     the user's stored roadmap.
     """
