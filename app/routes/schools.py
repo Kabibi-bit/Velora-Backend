@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.db_models import Profile
 from app.services.auth import require_auth_for_user
+from app.services.rate_limit import rate_limit
 from app.services.schools import (
     search_schools,
     lookup_school,
@@ -270,6 +271,7 @@ def schools_journey(user_id: str, db: Session = Depends(get_db), _auth: dict = D
  
 @router.post("/essay-polish/{user_id}")
 def schools_essay_polish(user_id: str, payload: dict = Body(default={}), db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    rate_limit(db, user_id, "essay-polish", limit_per_day=40)
     """The honest humanizer: analyze the STUDENT'S OWN essay draft for clichés,
     AI-tells, vague words, and school-format misfit, returning concrete revision
     feedback. Does NOT rewrite the essay and is NOT a detector-evasion tool -
