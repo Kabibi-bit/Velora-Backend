@@ -76,6 +76,7 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
     verify_token_belongs_to_user(payload.user_id, authorization)
+    require_feature(db, payload.user_id, "outreach_drafting")
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
