@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.services.auth import require_auth_for_user
+from app.services.tiers import require_feature
+from app.services.rate_limit import rate_limit_by_tier
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
  
@@ -203,6 +205,8 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db), _auth: dict 
  
 @router.get("/matches/{user_id}/explain/{listing_id}")
 def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    require_feature(db, user_id, "deep_match_explanations")
+    rate_limit_by_tier(db, user_id, "deep-explain", per_action_limit=200)
     """On-demand DEEP explanation of why a listing is a good match -
     a real Claude call producing an actual paragraph grounded in the
     full profile, the listing, and the roadmap if one exists. This is
@@ -285,6 +289,8 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
  
 @router.get("/matches/{user_id}/connect/{listing_id}")
 def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    require_feature(db, user_id, "outreach_drafting")
+    rate_limit_by_tier(db, user_id, "outreach-draft", per_action_limit=200)
     """Generates a real referral/networking strategy for a specific
     listing - who to look for, how to actually find them, and a
     tailored outreach message. This deliberately does NOT invent a
