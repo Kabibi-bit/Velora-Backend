@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -14,6 +15,7 @@ from app.services.auto_apply import (
     compute_sendable_at,
     create_application_for_match,
 )
+from app.services.timeutil import utcnow
  
 router = APIRouter(prefix="/applications", tags=["applications"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -78,6 +80,7 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db), authorization:
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
     verify_token_belongs_to_user(payload.user_id, authorization)
+    rate_limit_by_tier(db, payload.user_id, "application-draft", per_action_limit=300)
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
@@ -209,12 +212,12 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
     verify_token_belongs_to_user(str(app_record.user_id), authorization)
     if app_record.status != "approved":
         raise HTTPException(status_code=400, detail="Application is not approved yet")
-    if app_record.sendable_at and datetime.utcnow() < app_record.sendable_at:
-        remaining = (app_record.sendable_at - datetime.utcnow()).seconds // 60
+    if app_record.sendable_at and utcnow() < app_record.sendable_at:
+        remaining = (app_record.sendable_at - utcnow()).seconds // 60
         raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
  
     app_record.status = "sent"
-    app_record.sent_at = datetime.utcnow()
+    app_record.sent_at = utcnow()
     db.commit()
     return {"status": "sent", "sent_at": app_record.sent_at.isoformat()}
  
