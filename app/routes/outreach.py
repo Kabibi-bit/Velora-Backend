@@ -1,6 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
+from app.services.tiers import require_feature
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
@@ -30,6 +31,7 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db), authorizatio
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
     verify_token_belongs_to_user(payload.user_id, authorization)
+    require_feature(db, payload.user_id, "outreach_drafting")
     try:
         uuid_module.UUID(payload.listing_id)
     except ValueError:
