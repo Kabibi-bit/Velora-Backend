@@ -49,3 +49,40 @@ def get_user(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(
         raise HTTPException(status_code=404, detail="User not found")
     return {"user_id": str(user.id), "email": user.email, "role": user.role}
  
+ 
+# --- Subscription tier (no payment yet; set via this endpoint for testing) ---
+from app.services.tiers import normalize_tier, get_user_tier, TIER_FEATURES  # noqa: E402
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+ 
+ 
+class _SetTierIn(_BaseModel):
+    tier: str
+ 
+ 
+@router.get("/{user_id}/tier")
+def get_tier(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """The user's current tier plus the feature flags it grants (so the client
+    can gate UI from the same server truth instead of guessing)."""
+    t = get_user_tier(db, user_id)
+    from app.services.tiers import daily_limit
+    from app.services.rate_limit import ai_budget_used_today
+    cap = daily_limit(t)
+    used = ai_budget_used_today(db, user_id)
+    return {
+        "tier": t,
+        "features": TIER_FEATURES[t],
+        "ai_budget": {"used_today": used, "limit": cap, "unlimited": cap >= 1000},
+    }
+ 
+ 
+@router.post("/{user_id}/tier")
+def set_tier(user_id: str, payload: _SetTierIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """Set the user's tier. NO PAYMENT YET - this exists so tiers are testable.
+    When billing is added, tier changes should flow from verified subscription
+    events (a webhook), and this open setter should be removed or locked down."""
+    from sqlalchemy import text
+    t = normalize_tier(payload.tier)
+    db.execute(text("UPDATE users SET tier = :t WHERE id = :uid"), {"t": t, "uid": str(user_id)})
+    db.commit()
+    return {"tier": t, "features": TIER_FEATURES[t]}
+ 
