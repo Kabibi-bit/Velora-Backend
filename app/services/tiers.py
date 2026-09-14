@@ -47,12 +47,49 @@ TIER_FEATURES = {
     },
 }
  
-# Daily AI-action caps per tier (used to tune the rate limiter per plan).
-TIER_LIMITS = {
-    "free": {"ai_actions_per_day": 15, "auto_drafts_per_day": 0},
-    "pro": {"ai_actions_per_day": 100, "auto_drafts_per_day": 10},
-    "max": {"ai_actions_per_day": 1000, "auto_drafts_per_day": 1000},
+# Daily caps. Two layers:
+#   1. A per-FEATURE daily cap per tier (the prudent part): a Free user can
+#      genuinely try each feature several times a day - enough to get real value
+#      and evaluate it - without any single feature running up cost. Pro gets
+#      generous working limits; Max is effectively unlimited.
+#   2. An overall daily AI budget per tier (a backstop across all features).
+#
+# Design intent, stated plainly: Free is meant to be USEFUL, not a locked
+# teaser. The free caps below let someone actually run a small real search
+# (a few roadmaps, several match explanations, a handful of essay reviews a day)
+# - they just can't operate at power-user volume. 1000 == "effectively unlimited".
+FEATURE_DAILY_CAPS = {
+    # feature/action key ->  {free, pro, max}
+    "roadmap-generate":   {"free": 3,  "pro": 25,  "max": 1000},
+    "roadmap-explain":    {"free": 8,  "pro": 80,  "max": 1000},
+    "strategy-position":  {"free": 3,  "pro": 30,  "max": 1000},
+    "career-explain":     {"free": 8,  "pro": 60,  "max": 1000},
+    "resume-generate":    {"free": 3,  "pro": 25,  "max": 1000},
+    "essay-polish":       {"free": 5,  "pro": 50,  "max": 1000},
+    "essay-brainstorm":   {"free": 5,  "pro": 50,  "max": 1000},
+    "outreach-draft":     {"free": 0,  "pro": 40,  "max": 1000},  # 0 = gated (Pro+ feature)
+    "deep-explain":       {"free": 0,  "pro": 80,  "max": 1000},  # 0 = gated (Pro+ feature)
 }
+ 
+# Overall daily AI budget across ALL features (a backstop, not the primary cap).
+# Kept comfortably above the sum a normal Free user would reach via per-feature
+# caps, so it only catches genuinely abnormal usage.
+TIER_LIMITS = {
+    "free": {"ai_actions_per_day": 25, "auto_drafts_per_day": 0},
+    "pro": {"ai_actions_per_day": 250, "auto_drafts_per_day": 10},
+    "max": {"ai_actions_per_day": 5000, "auto_drafts_per_day": 5000},
+}
+ 
+ 
+def feature_daily_cap(tier, feature_key: str) -> int:
+    """The per-day cap for a specific feature at this tier. Unknown feature ->
+    a safe default from the overall budget (so a new AI endpoint is bounded even
+    before it's listed here). 1000+ means effectively unlimited."""
+    caps = FEATURE_DAILY_CAPS.get(feature_key)
+    t = normalize_tier(tier)
+    if caps is None:
+        return daily_limit(t)  # fall back to the overall budget
+    return caps.get(t, 0)
  
  
 def normalize_tier(tier) -> str:
