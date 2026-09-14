@@ -2,6 +2,8 @@ import os
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
+from app.services.tiers import require_feature
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
@@ -207,6 +209,8 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db), aut
     TYPE of contact and gives a real, usable script.
     """
     verify_token_belongs_to_user(payload.user_id, authorization)
+    require_feature(db, payload.user_id, "outreach_drafting")
+    rate_limit_by_tier(db, payload.user_id, "outreach-draft", per_action_limit=200)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
