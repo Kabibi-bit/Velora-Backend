@@ -61,17 +61,34 @@ class _SetTierIn(_BaseModel):
  
 @router.get("/{user_id}/tier")
 def get_tier(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
-    """The user's current tier plus the feature flags it grants (so the client
-    can gate UI from the same server truth instead of guessing)."""
+    """The user's current tier, its feature flags, the overall daily AI budget,
+    and per-feature usage-vs-cap for today - so the client (e.g. the Plan page)
+    can show real usage honestly instead of guessing."""
     t = get_user_tier(db, user_id)
-    from app.services.tiers import daily_limit
-    from app.services.rate_limit import ai_budget_used_today
+    from app.services.tiers import daily_limit, feature_daily_cap
+    from app.services.rate_limit import ai_budget_used_today, usage_today
     cap = daily_limit(t)
     used = ai_budget_used_today(db, user_id)
+    # Per-feature usage today, keyed by the labels the Plan page displays.
+    # (display label -> the rate-limit action name it counts against)
+    _feature_actions = {
+        "roadmaps": "roadmap-generate",
+        "essay reviews": "essay-polish",
+        "match explanations": "deep-explain",
+    }
+    features_usage = {}
+    for label, action in _feature_actions.items():
+        fcap = feature_daily_cap(t, action)
+        features_usage[label] = {
+            "used_today": usage_today(db, user_id, action),
+            "limit": fcap,
+            "unlimited": fcap >= 1000,
+        }
     return {
         "tier": t,
         "features": TIER_FEATURES[t],
         "ai_budget": {"used_today": used, "limit": cap, "unlimited": cap >= 1000},
+        "feature_usage": features_usage,
     }
  
  
