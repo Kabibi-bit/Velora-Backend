@@ -631,7 +631,7 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
     explanation and the number can no longer disagree, because they
     now share one source of truth.
     """
-    goal_phrase = (profile["northstar"].split(".")[0] or "your goal").strip().lower()
+    goal_phrase = ((profile.get("northstar") or "").split(".")[0] or "your goal").strip().lower()
     factors = match["factors"]
     clauses = []
  
