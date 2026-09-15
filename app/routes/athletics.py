@@ -349,6 +349,7 @@ class ClipEditPlanIn(BaseModel):
     level: str = Field(max_length=100)
     career_direction: str = Field(max_length=100)
     clips_description: str = Field(max_length=4000)
+    target_schools: str = Field(default="", max_length=1000)
  
  
 @router.post("/edit-plan")
@@ -368,7 +369,8 @@ def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dic
         raise HTTPException(status_code=400, detail="clips_description is required")
     try:
         plan = generate_clip_edit_plan(
-            client, payload.sport, payload.level, payload.career_direction, payload.clips_description
+            client, payload.sport, payload.level, payload.career_direction,
+            payload.clips_description, target_schools=payload.target_schools,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate an edit plan just now: {e}")
