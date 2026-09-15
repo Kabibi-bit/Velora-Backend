@@ -183,7 +183,7 @@ def draft_coach_outreach(anthropic_client, sport: str, level: str, career_direct
     return result
  
  
-def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_direction: str, clips_description: str) -> dict:
+def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_direction: str, clips_description: str, target_schools: str = "") -> dict:
     """Honest scope note: this does not edit or process any real video
     file - there is no video hosting or editing infrastructure
     connected anywhere in this stack. What this gives is a real,
@@ -191,6 +191,12 @@ def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_dir
     their actual raw footage - which clips to use, in what order,
     how to trim them, and what to caption - for them to execute in
     whatever video editor they already use.
+ 
+    When target_schools is provided, the plan is TAILORED to those
+    programs' level and typical priorities - a real text-reasoning
+    enhancement (division, style, what programs at that level look
+    for). It never invents specific claims about a named coach; it
+    reasons from the program's level/type, which is honest.
     """
     direction_label = {
         "play-college": "playing at the college level",
@@ -199,16 +205,34 @@ def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_dir
         "sports-management": "a sports management career",
     }.get(career_direction, career_direction)
  
+    schools_line = ""
+    tailoring_instruction = ""
+    if target_schools and target_schools.strip():
+        schools_line = f"They are targeting these programs/schools: \"{target_schools.strip()}\".\n\n"
+        tailoring_instruction = (
+            "TAILOR the edit plan to the programs they're targeting: consider the typical division/level "
+            "and playing style of those programs and what coaches at that level commonly prioritize, and "
+            "order/emphasize clips accordingly (e.g. a program known for a high-pressing style rewards "
+            "leading with defensive work-rate and recovery clips; a possession-based program rewards "
+            "composure and decision-making in tight spaces). Reason from the program's LEVEL and TYPE - "
+            "do NOT invent specific claims about what a named coach personally wants. Add a 'why for these "
+            "schools' note to relevant sequence steps where the tailoring changes the choice.\n\n"
+        )
+ 
     prompt = (
         f"A student-athlete: sport \"{sport}\", level {level}, career direction: {direction_label}.\n\n"
+        f"{schools_line}"
         f"They described their available raw footage/clips as:\n\"{clips_description}\"\n\n"
         "Give them a real, specific edit plan for turning this into a strong highlight reel - based ONLY "
         "on the clips they actually described, not invented footage. If what they described is too thin "
         "to make a strong reel, say so honestly rather than pretending it's enough.\n\n"
+        f"{tailoring_instruction}"
         "Return a JSON object with exactly these three keys:\n"
         "- edit_sequence: an array of objects, each with 'clip' (which described clip/moment this refers "
         "to, by their own description) and 'instruction' (specific guidance: where to trim it, how long "
-        "to hold it, what to lead into next, and why it goes in this position)\n"
+        "to hold it, what to lead into next, and why it goes in this position)"
+        + (", and optionally 'why_for_schools' (1 sentence on how this choice fits the targeted programs, only where relevant)" if target_schools and target_schools.strip() else "")
+        + "\n"
         "- captions: an array of 2-4 short on-screen text suggestions tied to specific clips (e.g. a stat, "
         "a title card idea) - concrete, not generic\n"
         "- honest_assessment: 1-2 sentences on whether what they described is actually enough for a strong "
