@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
  
 from app.db import get_db
@@ -13,8 +13,8 @@ VALID_ROLES = {"candidate"}
  
 class SignupIn(BaseModel):
     email: EmailStr
-    password: str
-    role: str = "candidate"
+    password: str = Field(min_length=1, max_length=128)
+    role: str = Field(default="candidate", max_length=40)
  
  
 @router.post("/signup")
@@ -51,7 +51,7 @@ def signup(payload: SignupIn, db: Session = Depends(get_db)):
  
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
  
  
 @router.post("/login")
