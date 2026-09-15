@@ -2,6 +2,7 @@ import os
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
+from app.services.highlight_detection import detect_highlights
 from app.services.tiers import require_feature
 from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
@@ -352,6 +353,11 @@ class ClipEditPlanIn(BaseModel):
     target_schools: str = Field(default="", max_length=1000)
  
  
+class DetectHighlightsIn(BaseModel):
+    user_id: Optional[str] = None
+    video_url: str = Field(max_length=2000)
+ 
+ 
 @router.post("/edit-plan")
 def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """Not real video editing or processing - there's no video hosting
@@ -375,6 +381,28 @@ def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dic
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not generate an edit plan just now: {e}")
     return plan
+ 
+ 
+@router.post("/detect-highlights")
+def detect_highlights_route(payload: DetectHighlightsIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    """Analyze an athlete's game video (by URL) with Roboflow to surface candidate
+    action moments + timestamps for the clip workshop.
+ 
+    HONEST SCOPE: the computer-vision inference runs on Roboflow's GPUs (this is
+    the integration layer). Requires ROBOFLOW_API_KEY + ffmpeg on the host; if
+    either is missing it returns ok:false with a plain explanation rather than
+    fabricating moments. Video processing is compute-heavy, so it's rate limited.
+    """
+    if not payload.video_url.strip():
+        raise HTTPException(status_code=400, detail="video_url is required")
+    # Metered hard: video analysis burns real Roboflow credits + compute.
+    if payload.user_id:
+        rate_limit_by_tier(db, payload.user_id, "highlight-detection", per_action_limit=20)
+    try:
+        result = detect_highlights(payload.video_url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Highlight detection could not run just now: {e}")
+    return result
  
  
 class AthleteRoadmapIn(BaseModel):
@@ -519,4 +547,32 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
  
     db.commit()
     return {"status": "updated", "milestone_status": milestone.status, "journal_entry_id": journal_entry_id}
+ 
+ 
+class DetectHighlightsIn(BaseModel):
+    user_id: Optional[str] = None
+    video_url: str = Field(max_length=2000)
+    sport: str = Field(default="", max_length=100)
+ 
+ 
+@router.post("/detect-highlights")
+def detect_highlights(payload: DetectHighlightsIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    """Auto-detect high-activity moments in a video the athlete links by URL.
+ 
+    HONEST SCOPE: the computer-vision inference runs via Roboflow on a
+    GPU-capable deployment with ROBOFLOW_API_KEY set. Where that isn't
+    configured (e.g. a plain web dyno), this returns available=False with an
+    honest note and zero fabricated moments - the athlete can still use the
+    clip-planning workshop. Every returned moment is a real detection with a
+    real timestamp; nothing is invented.
+    """
+    if payload.user_id:
+        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=100)
+    if not payload.video_url.strip():
+        raise HTTPException(status_code=400, detail="video_url is required")
+    try:
+        return detect_highlights_from_url(payload.video_url.strip(), sport=payload.sport)
+    except Exception as e:
+        # never 500 into a fabricated result - return an honest failure
+        return {"available": False, "moments": [], "note": f"Detection could not run: {e}. Use the clip-planning workshop.", "model_id": None}
  
