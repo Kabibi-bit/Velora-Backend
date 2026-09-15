@@ -435,6 +435,107 @@ def assess_listing_data_quality(listing: dict) -> dict:
     return {"tier": tier, "points": points, "max_points": 7, "reasons": reasons}
  
  
+# ============================================================================
+# SIGNAL SCORE (backend mirror of the frontend computeSignalScore).
+# Reframes the discredited "match %" into "how much does applying here actually
+# help your case?" - folding fit + freshness + ghost-risk. Kept in byte-for-byte
+# behavioural parity with velora/state.js so the UI shows identical results
+# whether scored locally (logged out) or here (logged in).
+# ============================================================================
+ 
+def _posting_age_days(listing: dict):
+    """Days since the posting appeared, from its real timestamp. None if unknown."""
+    ts = listing.get("fetched_at") or listing.get("posted_at") or listing.get("created_at")
+    if not ts:
+        return None
+    from datetime import datetime, timezone
+    if isinstance(ts, datetime):
+        t = ts
+    else:
+        try:
+            t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return max(0, int((now - t).total_seconds() // 86400))
+ 
+ 
+def assess_listing_signal(listing: dict) -> dict:
+    """Freshness + ghost-risk assessment for one listing. Honest bands, never a fake %."""
+    age = _posting_age_days(listing)
+    dq = listing.get("data_quality") or {}
+    q = dq.get("tier")
+    desc = listing.get("description")
+    has_desc = bool(desc and len(str(desc).strip()) > 40)
+    tags = listing.get("tags") or []
+    tag_count = len(tags) if isinstance(tags, list) else 0
+ 
+    if age is None:
+        freshness, fresh_note = "unknown", "No post date available - freshness unverified."
+    elif age <= 3:
+        freshness = "fresh"
+        when = "today" if age == 0 else f"{age} day{'s' if age > 1 else ''} ago"
+        fresh_note = f"Posted {when} - you're early, before the crush."
+    elif age <= 10:
+        freshness, fresh_note = "recent", f"Posted {age} days ago - still active, but the pile is growing."
+    elif age <= 25:
+        freshness, fresh_note = "aging", f"Posted {age} days ago - likely crowded; many roles fill by now."
+    else:
+        freshness, fresh_note = "stale", f"Posted {age}+ days ago - high chance it's filled or a \"ghost\" posting. Verify on the company site before spending effort."
+ 
+    ghost_risk = "low"
+    staleish = (age is not None and age > 25)
+    thin = (q == "thin") or (not has_desc and tag_count < 3)
+    if staleish and thin:
+        ghost_risk = "high"
+    elif staleish or thin:
+        ghost_risk = "elevated"
+ 
+    return {"age_days": age, "freshness": freshness, "fresh_note": fresh_note, "ghost_risk": ghost_risk, "thin": thin}
+ 
+ 
+def compute_signal_score(scored_listing: dict) -> dict:
+    """The Signal Score: 0-97, honest, capped. Fit adjusted for freshness + ghost risk."""
+    fit = scored_listing.get("score_pct")
+    fit = fit if isinstance(fit, (int, float)) else 0
+    sig = assess_listing_signal(scored_listing)
+ 
+    score = float(fit)
+    fresh_mult = {"fresh": 1.0, "recent": 0.94, "aging": 0.8, "stale": 0.55, "unknown": 0.9}[sig["freshness"]]
+    score *= fresh_mult
+    if sig["ghost_risk"] == "high":
+        score *= 0.7
+    elif sig["ghost_risk"] == "elevated":
+        score *= 0.88
+    score = max(0, min(97, round(score)))
+ 
+    fr = sig["freshness"]
+    if sig["ghost_risk"] == "high":
+        band = "Weak signal"
+        headline = ("Applying here is a weak signal - " +
+                    ("the posting looks stale/ghost" if fr == "stale" else "thin, unverifiable posting") +
+                    ". Spend your effort somewhere fresher.")
+    elif fit >= 70 and fr in ("fresh", "recent"):
+        band = "Strong signal"
+        headline = f"Strong fit on a live posting - applying here genuinely moves your case. {sig['fresh_note']}"
+    elif fit >= 70:
+        band = "Good fit, weak timing"
+        headline = f"Good fit, but {sig['fresh_note'][0].lower() + sig['fresh_note'][1:]} A tailored application still helps - move fast."
+    elif score >= 45:
+        band = "Moderate signal"
+        headline = f"A reasonable but not standout signal. {sig['fresh_note']}"
+    else:
+        band = "Low signal"
+        headline = ("Low signal - weak fit" +
+                    (" and an aging posting" if fr in ("stale", "aging") else "") +
+                    ". Only worth it if you're broadening your search.")
+ 
+    return {"signal_score": score, "signal_band": band, "signal_headline": headline,
+            "freshness": fr, "fresh_note": sig["fresh_note"], "ghost_risk": sig["ghost_risk"], "age_days": sig["age_days"]}
+ 
+ 
 def score_listing(listing: dict, profile: dict, factor_weights: dict | None = None, roadmap_milestones: list | None = None) -> Optional[dict]:
     """Returns None if the listing is excluded by a dealbreaker, else a
     structured score dict with a top-level score_pct plus every named
@@ -976,7 +1077,9 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
         match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
         match["rationale"] = explain_score(listing, match, profile)
-        scored.append({**listing, **match})
+        _sl = {**listing, **match}
+        _sl.update(compute_signal_score(_sl))
+        scored.append(_sl)
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
     presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
     return presentable[:top_n]
@@ -1021,7 +1124,9 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
         match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
         match["rationale"] = explain_score(listing, match, profile)
-        scored.append({**listing, **match})
+        _sl = {**listing, **match}
+        _sl.update(compute_signal_score(_sl))
+        scored.append(_sl)
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
  
     presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
