@@ -542,3 +542,100 @@ def normalize_scholarship_from_search(raw: dict) -> dict | None:
         "apply_url": raw["apply_url"],
     }
  
+ 
+# ============================================================================
+# TARGET PROGRAMS — real athlete opportunities from the free NCAA schools API.
+#
+# College athletic recruiting is relationship-based, not application-based:
+# there is no free "apply to this scholarship" feed (and pretending otherwise
+# would misrepresent how recruiting works). What DOES exist free is the NCAA
+# schools list (via a self-hosted henrygd/ncaa-api instance). So we surface real
+# college PROGRAMS matched to the athlete's sport/division as "target programs"
+# they can pursue via the coach-outreach tool - which is exactly how recruiting
+# actually works: get on the radar of the right programs.
+#
+# Set NCAA_API_BASE to your ncaa-api instance (e.g. https://your-ncaa-api.app or
+# http://localhost:3000). If unset, this no-ops cleanly (no crash, no fake data).
+# ============================================================================
+ 
+NCAA_API_BASE = os.getenv("NCAA_API_BASE", "").rstrip("/")
+ 
+ 
+def normalize_ncaa_school(raw: dict, sport: str | None = None) -> dict | None:
+    """Turn one NCAA school record into a canonical 'athletic' target-program
+    listing. Returns None for anything without a usable name (never fabricates)."""
+    # The schools-index payload uses fields like name / nameShort / slug / seo;
+    # be liberal about which key carries the name since the upstream varies.
+    name = (raw.get("name") or raw.get("nameShort") or raw.get("school")
+            or raw.get("title") or "").strip()
+    if not name:
+        return None
+    slug = (raw.get("slug") or raw.get("seo") or raw.get("team_seo") or "").strip()
+    sport_label = (sport or "").strip()
+ 
+    title = f"{name} {sport_label}".strip() + (" program" if sport_label else " athletics")
+    external_id = "ncaa_" + hashlib.sha256((name + "|" + sport_label).encode()).hexdigest()[:16]
+    # A real, useful destination: the school's NCAA page (or a search fallback).
+    apply_url = (f"https://www.ncaa.com/schools/{slug}" if slug
+                 else "https://www.ncaa.com/schools-index")
+ 
+    tags = ["college", "recruiting", "ncaa"]
+    if sport_label:
+        tags.append(sport_label.lower())
+    if raw.get("division"):
+        tags.append(str(raw["division"]).lower())
+    if raw.get("conference"):
+        tags.append(str(raw["conference"]).lower())
+ 
+    division = raw.get("division") or ""
+    conf = raw.get("conference") or ""
+    desc_bits = [f"{name} fields an NCAA{(' ' + str(division)) if division else ''} {sport_label or 'athletics'} program."]
+    if conf:
+        desc_bits.append(f"Conference: {conf}.")
+    desc_bits.append("Recruiting is relationship-based: use Velora's coach-outreach tool to get on this program's radar. Verify current roster needs and coach contacts on the official athletics site before reaching out.")
+ 
+    return {
+        "external_id": external_id,
+        "source": "ncaa",
+        "title": title,
+        "org": name,
+        "type": "athletic",
+        "location": raw.get("state") or raw.get("city") or None,
+        "description": " ".join(desc_bits),
+        "tags": tags,
+        "deadline": None,          # recruiting has no single deadline
+        "apply_url": apply_url,
+        "salary_min": None,
+        "salary_max": None,
+    }
+ 
+ 
+async def fetch_ncaa_schools(sport: str | None = None, limit: int = 200) -> list[dict]:
+    """Fetch the NCAA schools list from the configured ncaa-api instance and
+    normalize into target-program listings. Fails SAFE: returns [] (never raises,
+    never fabricates) if the base URL is unset or the fetch fails - so a missing
+    data source can never break the app or inject fake opportunities."""
+    if not NCAA_API_BASE:
+        return []
+    url = f"{NCAA_API_BASE}/schools-index"
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        return []  # fail safe: no source, no crash, no fake data
+ 
+    # The endpoint may return a bare list or an object wrapping one.
+    schools = data if isinstance(data, list) else (data.get("schools") or data.get("data") or [])
+    out = []
+    for raw in schools:
+        if not isinstance(raw, dict):
+            continue
+        norm = normalize_ncaa_school(raw, sport=sport)
+        if norm:
+            out.append(norm)
+        if len(out) >= limit:
+            break
+    return out
+ 
