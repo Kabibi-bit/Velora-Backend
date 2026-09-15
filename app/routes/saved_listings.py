@@ -1,6 +1,7 @@
 import os
 from fastapi import APIRouter, Depends, HTTPException, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
@@ -53,6 +54,7 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db), authorization: 
  
     draft_result = None
     try:
+        rate_limit_by_tier(db, payload.user_id, "application-draft", per_action_limit=300)
         draft_result = create_application_for_match(db, client, payload.user_id, payload.listing_id)
         if draft_result.get("error"):
             draft_result = None  # profile missing, dealbreaker conflict, etc. - just skip silently
