@@ -213,4 +213,3 @@ def _pget(pred, key, default=None):
     if isinstance(pred, dict):
         return pred.get(key, default)
     return getattr(pred, key, default)
- a
