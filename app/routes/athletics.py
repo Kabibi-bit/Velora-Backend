@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import AthleteEvent, AthleteOutreach, AthleteRoadmapMilestone, AthleteRoadmapSummary, SocialPost
@@ -18,7 +19,8 @@ from app.services.email_send import guess_contact_emails, send_email
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/athletics", tags=["athletics"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# `client` is resolved lazily via module __getattr__ below, so a missing
+# ANTHROPIC_API_KEY can never crash this module at import time.
  
 VALID_DIRECTIONS = {"play-college", "go-pro", "coach", "sports-management"}
  
@@ -561,4 +563,16 @@ def detect_highlights(payload: DetectHighlightsIn, db: Session = Depends(get_db)
     except Exception as e:
         # never 500 into a fabricated result - return an honest failure
         return {"available": False, "moments": [], "note": f"Detection could not run: {e}. Use the clip-planning workshop.", "model_id": None}
+ 
+ 
+def __getattr__(name):
+    # Lazily provide `client` so importing this module never requires the
+    # API key to be present (prevents a startup crash / port-bind failure).
+    if name == "client":
+        c = get_client()
+        if c is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
+        return c
+    raise AttributeError(name)
  
