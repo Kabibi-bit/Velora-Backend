@@ -564,13 +564,25 @@ NCAA_API_BASE = os.getenv("NCAA_API_BASE", "").rstrip("/")
 def normalize_ncaa_school(raw: dict, sport: str | None = None) -> dict | None:
     """Turn one NCAA school record into a canonical 'athletic' target-program
     listing. Returns None for anything without a usable name (never fabricates)."""
-    # The schools-index payload uses fields like name / nameShort / slug / seo;
-    # be liberal about which key carries the name since the upstream varies.
-    name = (raw.get("name") or raw.get("nameShort") or raw.get("school")
-            or raw.get("title") or "").strip()
+    # ncaa.com data (which this API mirrors) commonly nests identifiers under a
+    # `names` object: {"char6","short","seo","full"}. But /schools-index shape
+    # can vary, so we read from BOTH the nested `names` object and flat keys, and
+    # prefer the fullest human name available. If none is present we return None
+    # (never fabricate). NOTE: the exact /schools-index field names should be
+    # confirmed against a live instance - this reader is deliberately liberal so
+    # it works whichever shape the endpoint returns.
+    names = raw.get("names") if isinstance(raw.get("names"), dict) else {}
+    name = (
+        names.get("full") or names.get("short")
+        or raw.get("name") or raw.get("nameShort") or raw.get("school")
+        or raw.get("title") or raw.get("nameFull") or raw.get("name_full") or ""
+    ).strip()
     if not name:
         return None
-    slug = (raw.get("slug") or raw.get("seo") or raw.get("team_seo") or "").strip()
+    slug = (
+        names.get("seo") or raw.get("seo") or raw.get("slug")
+        or raw.get("team_seo") or raw.get("teamSeo") or ""
+    ).strip()
     sport_label = (sport or "").strip()
  
     title = f"{name} {sport_label}".strip() + (" program" if sport_label else " athletics")
