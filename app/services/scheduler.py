@@ -35,9 +35,11 @@ from app.services.ingestion import (
     discover_scholarships_via_search, normalize_scholarship_from_search, _scholarship_passes_quality_check,
     fetch_athletic_career_jobs, normalize_athletic_job, ATHLETIC_CAREER_QUERIES,
     fetch_admissions_opportunities, normalize_admissions_opportunity, ADMISSIONS_OPPORTUNITY_QUERIES,
+    fetch_ncaa_schools,
     check_and_reserve_quota, ADZUNA_DAILY_CALL_LIMIT,
 )
 from app.services.matching import rank_listings
+from app.services.timeutil import utcnow
 from app.services.embeddings import generate_embedding
  
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "1440"))  # default: once/day
@@ -348,6 +350,34 @@ async def _pull_and_store_new_listings(db: Session):
     except Exception as e:
         print(f"Admissions opportunity ingestion failed (non-fatal): {e}")
  
+    # Source 6: NCAA target programs (real college athletic programs from the
+    # free NCAA schools API via a self-hosted ncaa-api instance). Recruiting is
+    # relationship-based, so these are programs to PURSUE via coach-outreach,
+    # not scholarships to "apply" to. No Claude call (tags/description are built
+    # from the school record). Fails safe: fetch_ncaa_schools returns [] if
+    # NCAA_API_BASE is unset or the fetch fails, so this is a clean no-op then.
+    try:
+        ncaa_programs = await fetch_ncaa_schools(limit=200)
+        for item in ncaa_programs:
+            exists = (
+                db.query(Listing)
+                .filter(Listing.source == item["source"], Listing.external_id == item["external_id"])
+                .first()
+            )
+            if exists:
+                continue
+            tags = list(set((item.get("tags") or []) + ["athletic"]))  # always discoverable by the athletic filter
+            db.add(Listing(
+                source=item["source"], external_id=item["external_id"], title=item["title"],
+                org=item["org"], type=item["type"], location=item["location"],
+                description=item["description"], tags=tags, deadline=item["deadline"],
+                apply_url=item["apply_url"],
+                embedding=_embed_listing(item["title"], item["description"], tags),
+            ))
+            stored_count += 1
+    except Exception as e:
+        print(f"NCAA target-program ingestion failed (non-fatal): {e}")
+ 
     db.commit()
     return stored_count
  
@@ -410,7 +440,7 @@ def run_scan_for_all_users():
  
     db = SessionLocal()
     try:
-        print(f"[{datetime.utcnow().isoformat()}] Starting daily scan...")
+        print(f"[{utcnow().isoformat()}] Starting daily scan...")
         new_count = asyncio.run(_pull_and_store_new_listings(db))
         print(f"Pulled {new_count} new listings.")
  
@@ -538,7 +568,7 @@ def run_scan_for_all_users():
         # failure here can never retroactively undo the scan above.
         try:
             from app.models.db_models import Application
-            now = datetime.utcnow()
+            now = utcnow()
             due_to_send = (
                 db.query(Application)
                 .filter(Application.status == "approved", Application.sendable_at.isnot(None), Application.sendable_at <= now)
