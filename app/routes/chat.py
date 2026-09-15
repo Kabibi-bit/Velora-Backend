@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import verify_token_belongs_to_user
 from app.services.rate_limit import rate_limit_by_tier
@@ -17,6 +18,7 @@ from app.services.matching import rank_listings
 from app.routes.listings import _profile_to_dict, _listing_to_dict
 from app.models.db_models import Listing
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/chat", tags=["chat"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
@@ -93,7 +95,8 @@ def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = He
             messages=messages,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not get a reply just now - try again. ({e})")
+        _log.warning("Could not get a reply just now - try again. - %s", e)
+        raise HTTPException(status_code=502, detail="Could not get a reply just now - try again.. Please try again.")
     reply = "".join(b.text for b in resp.content if b.type == "text")
  
     # Summarize anything durable from this exchange and store it -
