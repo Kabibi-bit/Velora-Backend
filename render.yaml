@@ -17,6 +17,9 @@ services:
         sync: false
       - key: NCAA_API_KEY
         sync: false
+      - key: ROBOFLOW_MODEL_ID
+        sync: false
+      - key: ROBOFLOW_API_KEY
+        sync: false
       - key: SCAN_INTERVAL_MINUTES
         value: "1440"
- 
