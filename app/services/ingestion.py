@@ -559,6 +559,9 @@ def normalize_scholarship_from_search(raw: dict) -> dict | None:
 # ============================================================================
  
 NCAA_API_BASE = os.getenv("NCAA_API_BASE", "").rstrip("/")
+# Optional access key: if you lock down your self-hosted ncaa-api instance with
+# NCAA_HEADER_KEY, set the same value here and it's sent as the x-ncaa-key header.
+NCAA_API_KEY = os.getenv("NCAA_API_KEY", "")
  
  
 def normalize_ncaa_school(raw: dict, sport: str | None = None) -> dict | None:
@@ -630,9 +633,10 @@ async def fetch_ncaa_schools(sport: str | None = None, limit: int = 200) -> list
     if not NCAA_API_BASE:
         return []
     url = f"{NCAA_API_BASE}/schools-index"
+    headers = {"x-ncaa-key": NCAA_API_KEY} if NCAA_API_KEY else None
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             data = resp.json()
     except Exception:
