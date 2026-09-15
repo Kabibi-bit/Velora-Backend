@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
 from app.services.tiers import require_feature
@@ -11,6 +12,7 @@ from app.models.db_models import OutreachEmail, Listing
 from app.services.auto_apply import draft_outreach_for_match
 from app.services.email_send import send_email
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
@@ -89,7 +91,8 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
     try:
         leadership_research = get_or_research_company_leadership(db, client, listing.org)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not research the company's leadership just now: {e}")
+        _log.warning("Could not research the company's leadership just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not research the company's leadership just now. Please try again.")
  
     result = draft_leadership_grounded_outreach(db, client, payload.user_id, payload.listing_id, leadership_research)
     if result.get("error") == "no_profile":
@@ -131,7 +134,8 @@ def get_leadership_research(listing_id: str, db: Session = Depends(get_db), _aut
     try:
         return get_or_research_company_leadership(db, client, listing.org)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not research this company's leadership just now: {e}")
+        _log.warning("Could not research this company's leadership just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not research this company's leadership just now. Please try again.")
  
  
 @router.get("/{user_id}")
@@ -229,7 +233,8 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization
     except Exception as e:
         outreach.status = "failed"
         db.commit()
-        raise HTTPException(status_code=502, detail=f"Send failed: {e}")
+        _log.warning("Send failed - %s", e)
+        raise HTTPException(status_code=502, detail="Send failed. Please try again.")
  
  
 @router.post("/send-all/{user_id}")
