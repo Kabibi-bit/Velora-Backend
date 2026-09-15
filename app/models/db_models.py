@@ -22,6 +22,9 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=True)  # nullable for backward-compat with any users created before auth existed
     role = Column(String, nullable=False, default="candidate")  # candidate
+    # Subscription tier: 'free' | 'pro' | 'max'. Enforced server-side (see
+    # app/services/tiers.py). Defaults to free; set via billing later.
+    tier = Column(String, nullable=False, default="free")
     created_at = Column(DateTime, default=datetime.utcnow)
  
     profiles = relationship("Profile", back_populates="user")
@@ -45,6 +48,13 @@ class Profile(Base):
     level = Column(String)
     career_direction = Column(String)
     achievements = Column(Text)
+    # Athlete recruiting specifics collected by the survey (previously dropped on
+    # save because the Profile table lacked columns for them). These matter for
+    # recruiting matches: position, graduation year, target division, GPA.
+    position = Column(String)
+    grad_year = Column(String)
+    target_division = Column(String)
+    gpa = Column(String)
     is_student = Column(Boolean, nullable=False, default=False)
     intended_major = Column(String)
     grade_level = Column(String)
