@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
@@ -15,6 +16,7 @@ from app.models.db_models import AthleteEvent, AthleteOutreach, AthleteRoadmapMi
 from app.services.athletics import generate_recruiting_content_plan, research_target_program, draft_coach_outreach, generate_clip_edit_plan, generate_athlete_roadmap
 from app.services.email_send import guess_contact_emails, send_email
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/athletics", tags=["athletics"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
@@ -53,7 +55,8 @@ def content_coach(payload: ContentPlanIn, db: Session = Depends(get_db), _auth: 
             client, payload.sport, payload.level, payload.career_direction, payload.achievements
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a content plan just now: {e}")
+        _log.warning("Could not generate a content plan just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a content plan just now. Please try again.")
     return plan
  
  
@@ -82,7 +85,8 @@ def research_program(payload: ProgramResearchIn, db: Session = Depends(get_db), 
     try:
         result = research_target_program(client, payload.sport, payload.level, payload.program_name)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not research this program just now: {e}")
+        _log.warning("Could not research this program just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not research this program just now. Please try again.")
     return result
  
  
@@ -243,7 +247,8 @@ def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db), aut
             payload.achievements, payload.target_description,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate outreach just now: {e}")
+        _log.warning("Could not generate outreach just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate outreach just now. Please try again.")
  
     outreach = AthleteOutreach(
         user_id=payload.user_id,
@@ -341,7 +346,8 @@ def send_outreach(outreach_id: str, db: Session = Depends(get_db), authorization
     except Exception as e:
         outreach.status = "failed"
         db.commit()
-        raise HTTPException(status_code=502, detail=f"Send failed: {e}")
+        _log.warning("Send failed - %s", e)
+        raise HTTPException(status_code=502, detail="Send failed. Please try again.")
  
  
 class ClipEditPlanIn(BaseModel):
@@ -379,7 +385,8 @@ def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dic
             payload.clips_description, target_schools=payload.target_schools,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate an edit plan just now: {e}")
+        _log.warning("Could not generate an edit plan just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate an edit plan just now. Please try again.")
     return plan
  
  
@@ -410,7 +417,8 @@ def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_
             client, payload.sport, payload.level, payload.career_direction, payload.achievements
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a roadmap just now: {e}")
+        _log.warning("Could not generate a roadmap just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a roadmap just now. Please try again.")
  
     db.query(AthleteRoadmapMilestone).filter(AthleteRoadmapMilestone.user_id == payload.user_id).delete()
     db.query(AthleteRoadmapSummary).filter(AthleteRoadmapSummary.user_id == payload.user_id).delete()
