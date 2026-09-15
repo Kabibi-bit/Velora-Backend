@@ -7,6 +7,7 @@ from sqlalchemy import desc
 from app.db import get_db
 from app.models.db_models import Profile
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.tiers import require_feature
  
 router = APIRouter(prefix="/profile", tags=["profile"])
  
@@ -27,6 +28,10 @@ class SurveyIn(BaseModel):
     level: str | None = Field(default=None, max_length=100)
     career_direction: str | None = Field(default=None, max_length=100)
     achievements: str | None = Field(default=None, max_length=4000)
+    position: str | None = Field(default=None, max_length=100)
+    grad_year: str | None = Field(default=None, max_length=20)
+    target_division: str | None = Field(default=None, max_length=50)
+    gpa: str | None = Field(default=None, max_length=20)
     is_student: bool = False
     intended_major: str | None = Field(default=None, max_length=200)
     grade_level: str | None = Field(default=None, max_length=100)
@@ -135,6 +140,10 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
         is_athlete=payload.is_athlete,
         sport=payload.sport,
         level=payload.level,
+        position=payload.position,
+        grad_year=payload.grad_year,
+        target_division=payload.target_division,
+        gpa=payload.gpa,
         career_direction=payload.career_direction,
         achievements=payload.achievements,
         is_student=payload.is_student,
@@ -190,6 +199,10 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db), _auth: dict
         "location_pref": profile.location_pref,
         "target_types": profile.target_types,
         "is_athlete": profile.is_athlete,
+        "position": profile.position,
+        "grad_year": profile.grad_year,
+        "target_division": profile.target_division,
+        "gpa": profile.gpa,
         "sport": profile.sport,
         "level": profile.level,
         "career_direction": profile.career_direction,
@@ -283,6 +296,7 @@ class AutoApplySettingsIn(BaseModel):
  
 @router.post("/{user_id}/auto-apply-settings")
 def set_auto_apply_settings(user_id: str, payload: AutoApplySettingsIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    require_feature(db, user_id, "auto_mode")
     """Turns Auto Apply mode on/off and sets the confidence threshold
     that determines what gets auto-drafted-and-queued during a scan,
     versus what only gets surfaced as a regular match.
