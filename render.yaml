@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: velora-backend
+    name: scanline-backend
     env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
@@ -12,6 +12,8 @@ services:
       - key: ADZUNA_APP_ID
         sync: false
       - key: ADZUNA_APP_KEY
+        sync: false
+      - key: NCAA_API_BASE
         sync: false
       - key: SCAN_INTERVAL_MINUTES
         value: "1440"
