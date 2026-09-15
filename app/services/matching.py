@@ -252,22 +252,21 @@ def _detect_seniority_mismatch(listing: dict, profile: dict) -> Optional[dict]:
     return None
  
  
-def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
+def _deadline_urgency_factor(listing: dict, profile: dict | None = None) -> tuple[float, int | None]:
     """Returns (score_contribution, days_left). A deadline that's
     close but not unrealistically close gets a small real boost -
     genuinely actionable urgency, not panic-inducing. Too far out or
     already passed contributes nothing.
+ 
+    Scaled by the USER'S stated search timeframe (mirrors the frontend
+    deadlineUrgencyFactor): a "now" searcher has soon-closing roles weighted
+    up; a "2yr+" explorer isn't pushed by urgency they don't feel.
     """
     if not listing.get("deadline"):
         return 0.0, None
     try:
         deadline_date = date.fromisoformat(listing["deadline"]) if isinstance(listing["deadline"], str) else listing["deadline"]
         if not isinstance(deadline_date, date):
-            # A deadline that's neither a real date string nor an
-            # actual date object (e.g. a raw int) would otherwise
-            # reach the subtraction below unchanged and crash there,
-            # outside where this try/except could catch it - found by
-            # brutally testing a non-string, non-date deadline value.
             return 0.0, None
     except (ValueError, TypeError):
         return 0.0, None
@@ -275,12 +274,16 @@ def _deadline_urgency_factor(listing: dict) -> tuple[float, int | None]:
     if days_left < 0:
         return 0.0, days_left
     if days_left <= 3:
-        return 0.5, days_left  # very soon - real but small nudge, not a huge score swing for something you might not reach in time
-    if days_left <= 14:
-        return 1.5, days_left  # the genuinely actionable window
-    if days_left <= 30:
-        return 0.5, days_left
-    return 0.0, days_left
+        base = 0.5
+    elif days_left <= 14:
+        base = 1.5  # the genuinely actionable window
+    elif days_left <= 30:
+        base = 0.5
+    else:
+        base = 0.0
+    tf = (profile or {}).get("timeframe", "")
+    urgency_mult = {"now": 1.6, "6-12mo": 1.0, "1-2yr": 0.6, "2yr+": 0.3}.get(tf, 1.0)
+    return base * urgency_mult, days_left
  
  
 def _detect_location_mismatch(listing: dict, profile: dict) -> Optional[dict]:
@@ -594,7 +597,7 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
         priority_fit += 1.5
  
     location_fit, location_reason = _location_fit_factor(listing, profile)
-    deadline_urgency, days_left = _deadline_urgency_factor(listing)
+    deadline_urgency, days_left = _deadline_urgency_factor(listing, profile)
     description_fit, description_terms = _description_overlap_factor(listing, goal_tokens, skill_tokens, matched_tag_terms)
     semantic_fit = semantic_similarity_factor(listing.get("embedding"), profile.get("embedding"), tag_count=len(listing_tags))
     roadmap_alignment = compute_roadmap_alignment(listing, roadmap_milestones) if roadmap_milestones else None
