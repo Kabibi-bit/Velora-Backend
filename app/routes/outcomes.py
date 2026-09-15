@@ -1,12 +1,14 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
  
 from app.db import get_db
 from app.models.db_models import Outcome, Listing, SocialPost
+from app.services.timeutil import utcnow
  
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -177,6 +179,7 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db), _auth
  
 @router.get("/{user_id}/personalization-insights")
 def get_personalization_insights(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    rate_limit_by_tier(db, user_id, "explain-outcome", per_action_limit=200)
     """The genuine depth upgrade beyond factor-category reweighting -
     reads the real content of applications you actually sent, not
     just pre-computed numeric factor tallies, and finds specific,
@@ -297,7 +300,7 @@ def get_reminders(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
  
-    now = datetime.utcnow()
+    now = utcnow()
  
     # Each application's LATEST outcome by listing - a later 'offer'
     # must genuinely supersede an earlier 'interview', so ordering by
@@ -362,7 +365,7 @@ def get_search_strain(user_id: str, db: Session = Depends(get_db), _auth: dict =
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
  
-    now = datetime.utcnow()
+    now = utcnow()
     sent = (
         db.query(Application)
         .filter(Application.user_id == user_id, Application.status == "sent", Application.sent_at.isnot(None))
