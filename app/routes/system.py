@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
  
 from app.db import get_db
+from app.services.auth import require_valid_token
  
 router = APIRouter(prefix="/system", tags=["system"])
  
  
 @router.get("/embeddings-status")
-def embeddings_status():
+def embeddings_status(_auth: dict = Depends(require_valid_token)):
     """Whether real semantic matching (see app/services/embeddings.py)
     is actually working right now - previously invisible without
     reading raw server logs. Makes a single real, throwaway call to
@@ -26,7 +27,7 @@ def embeddings_status():
  
  
 @router.post("/backfill-embeddings")
-def backfill_embeddings(db: Session = Depends(get_db)):
+def backfill_embeddings(db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     """Any listing ingested before VOYAGE_API_KEY was configured has
     no embedding, permanently - the normal daily scan skips any
     listing it's already seen by source+external_id, so setting up
