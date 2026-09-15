@@ -6,6 +6,7 @@ from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import Profile
@@ -20,7 +21,8 @@ from app.models.db_models import Listing
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/chat", tags=["chat"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# `client` is resolved lazily via module __getattr__ below, so a missing
+# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class ChatIn(BaseModel):
@@ -115,4 +117,16 @@ def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = He
         print(f"Chat memory summarization/storage failed (non-fatal, reply still returned): {e}")
  
     return {"reply": reply}
+ 
+ 
+def __getattr__(name):
+    # Lazily provide `client` so importing this module never requires the
+    # API key to be present (prevents a startup crash / port-bind failure).
+    if name == "client":
+        c = get_client()
+        if c is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
+        return c
+    raise AttributeError(name)
  
