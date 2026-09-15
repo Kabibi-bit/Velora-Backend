@@ -46,7 +46,22 @@ def generate_recruiting_content_plan(anthropic_client, sport: str, level: str, c
         "closing the gap between their current level and their target level - name real, standard drills "
         "for this sport, not vague advice\n"
         "- content_checklist: an array of 3-4 concrete, practical dos for filming/presenting content (e.g. "
-        "camera angle, what footage to prioritize keeping, length) - specific to this sport\n\n"
+        "camera angle, what footage to prioritize keeping, length) - specific to this sport\n"
+        "- coaching_insights: an array of 3-5 objects, each with 'principle' and 'how_to_show_it'. These "
+        "capture what college coaches AT THIS LEVEL AND IN THIS SPORT commonly prioritize tactically and in "
+        "player mentality (e.g. for soccer: 'defensive work rate off the ball', 'decision speed in tight "
+        "spaces'; for basketball: 'help-defense rotations', 'playing without the ball'). Each 'principle' "
+        "is a REAL, widely-recognized coaching priority for this sport/level - NOT a claim about any "
+        "specific named coach or program. Each 'how_to_show_it' is one concrete way the athlete can "
+        "demonstrate that quality in their film or play. CRITICAL: do NOT name specific coaches or attribute "
+        "beliefs/tactics/quotes to any real individual - these are general, established tactical priorities "
+        "for the sport, because that is honest knowledge; inventing what a named coach believes is not.\n"
+        "- researching_specific_coaches: a single string (2-3 sentences) telling the athlete how to find a "
+        "SPECIFIC target coach's actual philosophy for themselves - e.g. watch that team's game film for "
+        "playing style, read the coach's real published interviews and press conferences, note their system "
+        "(pace, formation, rotation) - and reminding them that Velora's 'Research a program' tool pulls real, "
+        "cited public statements rather than guesses. This is where specific-coach insight should come from: "
+        "real research, never an AI's assumption.\n\n"
         "Return ONLY valid JSON, nothing else, no markdown fences, no commentary."
     )
     resp = anthropic_client.messages.create(
@@ -63,6 +78,17 @@ def generate_recruiting_content_plan(anthropic_client, sport: str, level: str, c
     required_keys = ("reel_structure", "commonly_evaluated", "drills_to_practice", "content_checklist")
     if not all(isinstance(plan.get(k), list) for k in required_keys):
         raise ValueError(f"content plan response is missing one or more required list fields: {required_keys}")
+    # coaching_insights is a list; researching_specific_coaches is a string. Both
+    # are new grounded-tactics fields. Validate leniently - if the model omitted
+    # them, default rather than failing the whole plan (they're additive).
+    if not isinstance(plan.get("coaching_insights"), list):
+        plan["coaching_insights"] = []
+    if not isinstance(plan.get("researching_specific_coaches"), str):
+        plan["researching_specific_coaches"] = (
+            "To learn a specific coach's real philosophy, watch that team's recent game film for their "
+            "playing style and system, read the coach's published interviews and press conferences, and "
+            "use Velora's 'Research a program' tool, which pulls real, cited public statements rather than guesses."
+        )
     return plan
  
  
