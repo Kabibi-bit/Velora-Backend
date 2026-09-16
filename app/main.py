@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
  
-from app.routes import profile, listings, chat, users, roadmap, outcomes, applications, manual_listings, saved_listings, notifications, career_discovery, outreach, auth, social, athletics, market_research, resume, assistance, strategy, engagement, dismissed_listings, schools
 from app.services.scheduler import start_scheduler
  
 load_dotenv()
@@ -37,28 +36,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
  
-app.include_router(auth.router)
-app.include_router(users.router)
-app.include_router(profile.router)
-app.include_router(schools.router)
-app.include_router(listings.router)
-app.include_router(chat.router)
-app.include_router(roadmap.router)
-app.include_router(outcomes.router)
-app.include_router(applications.router)
-app.include_router(manual_listings.router)
-app.include_router(saved_listings.router)
-app.include_router(notifications.router)
-app.include_router(career_discovery.router)
-app.include_router(outreach.router)
-app.include_router(social.router)
-app.include_router(athletics.router)
-app.include_router(market_research.router)
-app.include_router(resume.router)
-app.include_router(assistance.router)
-app.include_router(strategy.router)
-app.include_router(engagement.router)
-app.include_router(dismissed_listings.router)
+# Resilient router loading: import and include each router INDIVIDUALLY so that
+# if any single module fails to import in a given environment, the app STILL
+# starts and binds its port (instead of the whole process crashing), and the log
+# shows exactly which module failed and why. A crash in one router must never
+# take the entire API down at startup.
+import importlib
+import logging as _logging
+_startup_log = _logging.getLogger("velora.startup")
+ 
+_ROUTE_MODULES = [
+    "auth", "users", "profile", "schools", "listings", "chat", "roadmap",
+    "outcomes", "applications", "manual_listings", "saved_listings",
+    "notifications", "career_discovery", "outreach", "social", "athletics",
+    "market_research", "resume", "assistance", "strategy", "engagement",
+    "dismissed_listings",
+]
+for _name in _ROUTE_MODULES:
+    try:
+        _mod = importlib.import_module(f"app.routes.{_name}")
+        app.include_router(_mod.router)
+    except Exception as _e:
+        # Log loudly which router failed and why, but keep starting the app.
+        _startup_log.error("ROUTER FAILED TO LOAD: app.routes.%s -> %s: %s",
+                           _name, type(_e).__name__, _e)
+        import traceback as _tb
+        _tb.print_exc()
  
 # system.py is a small, purely diagnostic router (the
 # /system/embeddings-status health check) - genuinely optional,
