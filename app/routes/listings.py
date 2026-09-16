@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
+import logging
 from app.services.auth import require_auth_for_user
+from app.services.ai_client import get_client
 from app.services.tiers import require_feature
 from app.services.rate_limit import rate_limit_by_tier
 from sqlalchemy.orm import Session
@@ -9,6 +11,7 @@ from app.db import get_db
 from app.models.db_models import Profile, Listing, Outcome, RoadmapMilestone
 from app.services.matching import rank_listings, rank_listings_with_near_misses, get_tag_weights_from_outcomes, get_personalized_factor_weights
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/listings", tags=["listings"])
  
  
@@ -178,8 +181,8 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db), _auth: dict 
     )
     auto_applied = []
     auto_drafted_outreach = []
-    if profile and profile.auto_apply_enabled:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = get_client()
+    if profile and profile.auto_apply_enabled and client is not None:
         listings = db.query(Listing).all()
         from app.models.db_models import DismissedListing
         dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user_id).all()}
@@ -232,7 +235,9 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
     except ValueError:
         raise HTTPException(status_code=404, detail="Listing not found")
  
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
  
     profile = (
         db.query(Profile)
@@ -283,7 +288,8 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
         )
         explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate this explanation just now: {e}")
+        _log.warning("Could not generate this explanation just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate this explanation just now. Please try again.")
     return {"listing_id": listing_id, "listing_title": listing.title, "explanation": explanation}
  
  
@@ -313,7 +319,9 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
     except ValueError:
         raise HTTPException(status_code=404, detail="Listing not found")
  
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = get_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
  
     profile = (
         db.query(Profile)
@@ -355,7 +363,8 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
         import json
         parsed = json.loads(text)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a connection strategy just now: {e}")
+        _log.warning("Could not generate a connection strategy just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a connection strategy just now. Please try again.")
  
     return {
         "listing_id": listing_id,
