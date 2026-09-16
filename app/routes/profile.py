@@ -291,7 +291,7 @@ def get_potential_score(user_id: str, db: Session = Depends(get_db), _auth: dict
  
 class AutoApplySettingsIn(BaseModel):
     enabled: bool
-    threshold: int = 80
+    threshold: int = Field(default=80, ge=0, le=100)  # confidence gate %, must be 0-100 or auto-send behaves nonsensically
  
  
 @router.post("/{user_id}/auto-apply-settings")
