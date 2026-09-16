@@ -72,5 +72,5 @@ def explain_outcome_deep(anthropic_client, listing: dict, application_draft: str
         model="claude-sonnet-4-6", max_tokens=250,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    return "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
