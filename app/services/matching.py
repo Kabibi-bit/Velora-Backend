@@ -1251,7 +1251,7 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
         messages=[{"role": "user", "content": prompt}],
     )
     import json, re
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     # Validate BOTH that it parses AND that it's a dict, before any subscript
     # access below. A list/string response (or malformed JSON) would otherwise
