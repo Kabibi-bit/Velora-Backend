@@ -202,7 +202,7 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         bullets = json.loads(text)
@@ -256,7 +256,7 @@ def generate_resume_summary(anthropic_client, profile: dict, entries: list[dict]
         model="claude-sonnet-4-6", max_tokens=150,
         messages=[{"role": "user", "content": prompt}],
     )
-    summary = "".join(b.text for b in resp.content if b.type == "text").strip()
+    summary = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
     source_text = f'{profile.get("northstar") or ""} ' + " ".join(e.get("raw_description") or "" for e in entries)
     flagged = _find_fabricated_numbers(source_text, summary)
