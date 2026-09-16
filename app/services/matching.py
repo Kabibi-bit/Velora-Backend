@@ -1253,7 +1253,16 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
     import json, re
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    parsed = json.loads(text)
+    # Validate BOTH that it parses AND that it's a dict, before any subscript
+    # access below. A list/string response (or malformed JSON) would otherwise
+    # raise on `parsed["sample_size"] = ...` - the later isinstance check comes
+    # too late. Raise one clear error the (wrapped) caller can turn into a 502.
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        raise ValueError("personalization insights response was not valid JSON")
+    if not isinstance(parsed, dict):
+        raise ValueError(f"personalization insights response was not a JSON object: {type(parsed).__name__}")
     parsed["sample_size"] = len(usable)
     parsed["note"] = None
  
