@@ -99,7 +99,7 @@ def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = He
     except Exception as e:
         _log.warning("Could not get a reply just now - try again. - %s", e)
         raise HTTPException(status_code=502, detail="Could not get a reply just now - try again.. Please try again.")
-    reply = "".join(b.text for b in resp.content if b.type == "text")
+    reply = "".join((b.text or "") for b in resp.content if b.type == "text")
  
     # Summarize anything durable from this exchange and store it -
     # this is what makes memory persist across sessions, not just within one.
