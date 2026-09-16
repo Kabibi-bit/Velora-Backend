@@ -93,10 +93,19 @@ async def fetch_adzuna(query: str, location: str = "us", page: int = 1) -> list[
         "what": query,
         "results_per_page": 50,
     }
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json().get("results", [])
+    # Fail SAFE like the other fetchers: an Adzuna outage / rate-limit / missing
+    # key must never raise up into the scan (which would risk aborting a cycle or
+    # crashing any caller that isn't individually wrapped). Return [] on any error.
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("results", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
  
  
 def normalize_adzuna(raw: dict) -> dict:
@@ -564,46 +573,91 @@ NCAA_API_BASE = os.getenv("NCAA_API_BASE", "").rstrip("/")
 NCAA_API_KEY = os.getenv("NCAA_API_KEY", "")
  
  
-def normalize_ncaa_school(raw: dict, sport: str | None = None) -> dict | None:
-    """Turn one NCAA school record into a canonical 'athletic' target-program
-    listing. Returns None for anything without a usable name (never fabricates)."""
-    # ncaa.com data (which this API mirrors) commonly nests identifiers under a
-    # `names` object: {"char6","short","seo","full"}. But /schools-index shape
-    # can vary, so we read from BOTH the nested `names` object and flat keys, and
-    # prefer the fullest human name available. If none is present we return None
-    # (never fabricate). NOTE: the exact /schools-index field names should be
-    # confirmed against a live instance - this reader is deliberately liberal so
-    # it works whichever shape the endpoint returns.
+def _slugify_school(name: str) -> str:
+    """Derive an ncaa.com-style slug from a school name, as a fallback when the
+    payload carries no explicit slug field. ncaa.com uses lowercase-hyphenated
+    slugs (e.g. 'University of Michigan' is reachable via 'michigan'-style slugs),
+    so this is a best-effort link target - the search fallback covers misses."""
+    import re as _re
+    s = name.lower().strip()
+    s = _re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s
+ 
+ 
+def _extract_school_name(raw) -> str:
+    """Find the school name in a record whatever its shape. Handles:
+      - a bare string ("Amherst College")
+      - a nested `names` object ({full/short/seo/char6})
+      - flat keys (name / school / title / institution / ...)
+      - as a last resort, the longest plausible string value in the object
+    Returns '' if nothing name-like is present (caller treats that as skip)."""
+    if isinstance(raw, str):
+        return raw.strip()
+    if not isinstance(raw, dict):
+        return ""
     names = raw.get("names") if isinstance(raw.get("names"), dict) else {}
-    name = (
-        names.get("full") or names.get("short")
-        or raw.get("name") or raw.get("nameShort") or raw.get("school")
-        or raw.get("title") or raw.get("nameFull") or raw.get("name_full") or ""
-    ).strip()
+    # Prefer explicitly-named fields, fullest first.
+    for v in (names.get("full"), names.get("short"),
+              raw.get("name"), raw.get("nameFull"), raw.get("name_full"),
+              raw.get("school"), raw.get("schoolName"), raw.get("institution"),
+              raw.get("nameShort"), raw.get("title"), raw.get("displayName")):
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    # Last resort: the longest string value that looks like a name (has a space
+    # or is reasonably long), ignoring short codes / slugs / urls / abbreviations.
+    candidates = []
+    for k, v in raw.items():
+        if isinstance(v, str):
+            vs = v.strip()
+            if len(vs) >= 4 and "/" not in vs and "http" not in vs.lower() and not vs.isupper():
+                candidates.append(vs)
+    if candidates:
+        # prefer ones with a space (real names usually have them)
+        spaced = [c for c in candidates if " " in c]
+        return max(spaced or candidates, key=len)
+    return ""
+ 
+ 
+def _extract_school_slug(raw, name: str) -> str:
+    """Find an explicit slug, else derive one from the name."""
+    if isinstance(raw, dict):
+        names = raw.get("names") if isinstance(raw.get("names"), dict) else {}
+        for v in (names.get("seo"), raw.get("seo"), raw.get("slug"),
+                  raw.get("team_seo"), raw.get("teamSeo"), raw.get("url_slug")):
+            if isinstance(v, str) and v.strip():
+                return v.strip().strip("/").split("/")[-1]
+    return _slugify_school(name) if name else ""
+ 
+ 
+def normalize_ncaa_school(raw, sport: str | None = None) -> dict | None:
+    """Turn one NCAA school record into a canonical 'athletic' target-program
+    listing. FIELD-NAME-AGNOSTIC: works whether the record is a bare string, a
+    nested `names` object, or flat keys of any common name - so it doesn't depend
+    on the exact /schools-index shape. Returns None only when no name-like value
+    exists at all (never fabricates)."""
+    name = _extract_school_name(raw)
     if not name:
         return None
-    slug = (
-        names.get("seo") or raw.get("seo") or raw.get("slug")
-        or raw.get("team_seo") or raw.get("teamSeo") or ""
-    ).strip()
+    rawd = raw if isinstance(raw, dict) else {}
+    slug = _extract_school_slug(raw, name)
     sport_label = (sport or "").strip()
  
     title = f"{name} {sport_label}".strip() + (" program" if sport_label else " athletics")
     external_id = "ncaa_" + hashlib.sha256((name + "|" + sport_label).encode()).hexdigest()[:16]
-    # A real, useful destination: the school's NCAA page (or a search fallback).
+    # A real, useful destination: the school's NCAA page (derived slug or search fallback).
     apply_url = (f"https://www.ncaa.com/schools/{slug}" if slug
                  else "https://www.ncaa.com/schools-index")
  
     tags = ["college", "recruiting", "ncaa"]
     if sport_label:
         tags.append(sport_label.lower())
-    if raw.get("division"):
-        tags.append(str(raw["division"]).lower())
-    if raw.get("conference"):
+    if rawd.get("division"):
+        tags.append(str(rawd["division"]).lower())
+    if rawd.get("conference"):
         tags.append(str(raw["conference"]).lower())
  
-    division = raw.get("division") or ""
-    conf = raw.get("conference") or ""
+    division = rawd.get("division") or ""
+    conf = rawd.get("conference") or ""
     desc_bits = [f"{name} fields an NCAA{(' ' + str(division)) if division else ''} {sport_label or 'athletics'} program."]
     if conf:
         desc_bits.append(f"Conference: {conf}.")
@@ -615,7 +669,7 @@ def normalize_ncaa_school(raw: dict, sport: str | None = None) -> dict | None:
         "title": title,
         "org": name,
         "type": "athletic",
-        "location": raw.get("state") or raw.get("city") or None,
+        "location": rawd.get("state") or rawd.get("city") or None,
         "description": " ".join(desc_bits),
         "tags": tags,
         "deadline": None,          # recruiting has no single deadline
@@ -646,7 +700,7 @@ async def fetch_ncaa_schools(sport: str | None = None, limit: int = 200) -> list
     schools = data if isinstance(data, list) else (data.get("schools") or data.get("data") or [])
     out = []
     for raw in schools:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, (dict, str)):
             continue
         norm = normalize_ncaa_school(raw, sport=sport)
         if norm:
