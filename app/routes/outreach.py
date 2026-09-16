@@ -6,6 +6,7 @@ from app.services.tiers import require_feature
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import OutreachEmail, Listing
@@ -14,7 +15,6 @@ from app.services.email_send import send_email
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/outreach", tags=["outreach"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 class DraftIn(BaseModel):
@@ -24,6 +24,10 @@ class DraftIn(BaseModel):
  
 @router.post("/draft")
 def draft_outreach(payload: DraftIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """The 'Find a contact' action - drafts a referral email straight
     into Workshop instead of showing it inline. Never sends anything.
     """
@@ -57,6 +61,10 @@ class DraftLeadershipGroundedIn(BaseModel):
  
 @router.post("/draft-leadership-grounded")
 def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGroundedIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Researches the company's real, current senior leadership - not
     just the CEO, but other genuine current executives too - and what
     they've actually, recently said and prioritized publicly, then
@@ -112,6 +120,10 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
  
 @router.get("/leadership-research/{listing_id}")
 def get_leadership_research(listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """A standalone view of the company research itself, not tied to
     drafting an email - so a candidate can genuinely understand what
     a company's real leadership seems to be prioritizing before
