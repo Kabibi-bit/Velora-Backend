@@ -173,8 +173,8 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
     """
     prompt = (
         f"Here is something a real person wrote, in their own words, about something they actually did:\n\n"
-        f'Role/title: "{entry["title"]}"' + (f' at {entry["org"]}' if entry.get("org") else "") + "\n"
-        f'What they said they did, in their own words: "{entry["raw_description"]}"\n\n'
+        f'Role/title: "{entry.get("title") or "(untitled)"}"' + (f' at {entry["org"]}' if entry.get("org") else "") + "\n"
+        f'What they said they did, in their own words: "{entry.get("raw_description") or ""}"\n\n'
         "Turn this into 2-4 strong resume bullet points - but if what they wrote genuinely only supports "
         "fewer distinct, honest bullets without repeating yourself or splitting one real responsibility "
         "into several separate-sounding ones, write fewer. Even a single bullet is fine if that's all the "
@@ -204,13 +204,19 @@ def polish_resume_entry(anthropic_client, entry: dict) -> dict:
     import json
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    bullets = json.loads(text)
+    try:
+        bullets = json.loads(text)
+    except json.JSONDecodeError:
+        bullets = []
     if not isinstance(bullets, list):
         bullets = []
+    # Keep only real string bullets - a list of non-strings (e.g. [1,2,3]) would
+    # otherwise crash the string ops in _find_fabricated_numbers below.
+    bullets = [b for b in bullets if isinstance(b, str)]
  
     flagged = []
     for bullet in bullets:
-        flagged.extend(_find_fabricated_numbers(entry["raw_description"], bullet))
+        flagged.extend(_find_fabricated_numbers(entry.get("raw_description", ""), bullet))
  
     return {"bullets": bullets, "flagged_numbers": sorted(set(flagged))}
  
