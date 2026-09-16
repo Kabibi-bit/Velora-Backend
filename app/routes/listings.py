@@ -188,18 +188,26 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db), _auth: dict 
         dismissed_ids = {str(row.listing_id) for row in db.query(DismissedListing).filter(DismissedListing.user_id == user_id).all()}
         ranked = rank_listings([_listing_to_dict(l) for l in listings], _profile_to_dict(profile), top_n=10, dismissed_ids=dismissed_ids)
         for listing in ranked:
-            outcome = create_application_for_match(db, client, user_id, listing["id"], auto_generated=True)
-            if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
-                auto_applied.append({"listing_id": listing["id"], "title": listing["title"], "confidence": outcome["composite_confidence"]})
+            # Isolate each listing so one failure doesn't abort the rest of the
+            # user's auto-apply/outreach batch (and doesn't 500 the whole request).
+            try:
+                outcome = create_application_for_match(db, client, user_id, listing["id"], auto_generated=True)
+                if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
+                    auto_applied.append({"listing_id": listing["id"], "title": listing["title"], "confidence": outcome["composite_confidence"]})
+            except Exception:
+                db.rollback()
  
             # Auto mode also drafts a referral outreach email for the
             # same eligible matches - queued in Workshop, never sent
             # automatically. This is what runs "while you're away":
             # by the time you're back, applications AND outreach
             # drafts are both waiting for a single review/send click.
-            outreach_result = draft_outreach_for_match(db, client, user_id, listing["id"], auto_generated=True)
-            if not outreach_result.get("error") and not outreach_result.get("already_existed"):
-                auto_drafted_outreach.append({"listing_id": listing["id"], "title": listing["title"], "to_address": outreach_result.get("to_address")})
+            try:
+                outreach_result = draft_outreach_for_match(db, client, user_id, listing["id"], auto_generated=True)
+                if not outreach_result.get("error") and not outreach_result.get("already_existed"):
+                    auto_drafted_outreach.append({"listing_id": listing["id"], "title": listing["title"], "to_address": outreach_result.get("to_address")})
+            except Exception:
+                db.rollback()
     result["auto_applied"] = auto_applied
     result["auto_drafted_outreach"] = auto_drafted_outreach
  
