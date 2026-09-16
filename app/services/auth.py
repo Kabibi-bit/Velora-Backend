@@ -60,6 +60,12 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password_bytes, password_hash.encode("utf-8"))
     except ValueError:
         return False
+    except Exception:
+        # Safety net mirroring decode_access_token in this same file: a
+        # security-critical credential check must treat any unexpected error
+        # (e.g. a bcrypt version raising a non-ValueError on a malformed stored
+        # hash) as an honest non-match, never a raw unhandled 500 at the login gate.
+        return False
  
  
 def create_access_token(user_id: str, role: str) -> str:
