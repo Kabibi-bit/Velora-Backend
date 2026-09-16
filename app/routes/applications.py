@@ -21,8 +21,6 @@ from app.services.timeutil import utcnow
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/applications", tags=["applications"])
-# `client` is resolved lazily via module __getattr__ below, so a missing
-# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class AcceptIn(BaseModel):
@@ -32,6 +30,10 @@ class AcceptIn(BaseModel):
  
 @router.post("/accept")
 def accept_match(payload: AcceptIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """The one-click 'I accept this match' action - this is also what
     fires automatically when a user stars a listing (see /saved in
     saved_listings.py). Computes the real match score, drafts a
@@ -72,6 +74,10 @@ class DraftIn(BaseModel):
  
 @router.post("/draft")
 def create_draft(payload: DraftIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Drafts an application and decides auto-send vs review, based on
     the confidence score you pass in (use the score from /listings/matches).
     Kept for manual/testing use - /accept is the real one-click path.
@@ -359,16 +365,4 @@ def get_company_concentration(user_id: str, db: Session = Depends(get_db), _auth
         if info["count"] >= SAME_COMPANY_CAUTION_THRESHOLD
     ]
     return {"cautions": cautions}
- 
- 
-def __getattr__(name):
-    # Lazily provide `client` so importing this module never requires the
-    # API key to be present (prevents a startup crash / port-bind failure).
-    if name == "client":
-        c = get_client()
-        if c is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
-        return c
-    raise AttributeError(name)
  
