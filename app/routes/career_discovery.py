@@ -14,8 +14,6 @@ from app.services.career_discovery import score_career_directions, explain_direc
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/career-discovery", tags=["career-discovery"])
-# `client` is resolved lazily via module __getattr__ below, so a missing
-# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class DiscoveryAnswersIn(BaseModel):
@@ -74,6 +72,10 @@ class ExplainDirectionIn(BaseModel):
  
 @router.post("/{user_id}/explain")
 def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     rate_limit_by_tier(db, user_id, "career-explain", per_action_limit=200)
     """On-demand, real Claude explanation for one direction - only
     called when someone actually wants more than the instant score,
@@ -98,16 +100,4 @@ def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = D
         _log.warning("Could not generate this explanation just now - %s", e)
         raise HTTPException(status_code=502, detail="Could not generate this explanation just now. Please try again.")
     return {"direction_id": payload.direction_id, "explanation": explanation}
- 
- 
-def __getattr__(name):
-    # Lazily provide `client` so importing this module never requires the
-    # API key to be present (prevents a startup crash / port-bind failure).
-    if name == "client":
-        c = get_client()
-        if c is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
-        return c
-    raise AttributeError(name)
  
