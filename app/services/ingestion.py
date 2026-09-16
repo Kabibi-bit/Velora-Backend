@@ -482,11 +482,11 @@ def _scholarship_passes_quality_check(raw: dict) -> tuple[bool, str]:
     principle already applied to candidate match scores elsewhere in
     this app (see matching.py's PRESENTABLE_MIN_SCORE).
     """
-    confidence = (raw.get("confidence") or "").lower()
+    confidence = str(raw.get("confidence") or "").lower()
     if confidence == "low":
         return False, "self-reported low confidence"
  
-    title = (raw.get("title") or "").strip()
+    title = str(raw.get("title") or "").strip()
     if not title:
         return False, "empty title"
     if len(title) < 8:
@@ -539,8 +539,8 @@ def normalize_scholarship_from_search(raw: dict) -> dict | None:
         except (ValueError, TypeError):
             deadline = None
  
-    title = raw["title"].strip()
-    org = (raw.get("org") or "Unknown").strip()
+    title = str(raw.get("title") or "").strip()
+    org = str(raw.get("org") or "Unknown").strip()
  
     # external_id needs to be stable across scans so the same real
     # scholarship doesn't get re-inserted as a duplicate every time a
