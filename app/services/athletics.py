@@ -69,9 +69,11 @@ def generate_recruiting_content_plan(anthropic_client, sport: str, level: str, c
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     plan = json.loads(text)
+    if not isinstance(plan, dict):
+        raise ValueError(f"content plan response was not a JSON object: {type(plan).__name__}")
     # Real shape validation - a syntactically valid but incomplete
     # response would otherwise pass through silently, mirrors the
     # exact fix just applied to the frontend's equivalent function.
@@ -121,7 +123,7 @@ def research_target_program(anthropic_client, sport: str, level: str, program_na
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
-    findings = "".join(b.text for b in resp.content if b.type == "text").strip()
+    findings = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
     # Surface which real sources were actually consulted, so the
     # person can verify this themselves rather than taking Claude's
@@ -174,9 +176,11 @@ def draft_coach_outreach(anthropic_client, sport: str, level: str, career_direct
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     result = json.loads(text)
+    if not isinstance(result, dict):
+        raise ValueError(f"coach outreach response was not a JSON object: {type(result).__name__}")
     required_keys = ("who_to_contact", "how_to_find", "email_subject", "email_body", "cold_call_script")
     if not all(isinstance(result.get(k), str) for k in required_keys):
         raise ValueError(f"coach outreach response is missing one or more required string fields: {required_keys}")
@@ -244,9 +248,11 @@ def generate_clip_edit_plan(anthropic_client, sport: str, level: str, career_dir
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     plan = json.loads(text)
+    if not isinstance(plan, dict):
+        raise ValueError(f"clip edit plan response was not a JSON object: {type(plan).__name__}")
     if not isinstance(plan.get("edit_sequence"), list) or not isinstance(plan.get("captions"), list) or not isinstance(plan.get("honest_assessment"), str):
         raise ValueError("clip edit plan response has an unexpected shape")
     return plan
@@ -301,9 +307,11 @@ def generate_athlete_roadmap(anthropic_client, sport: str, level: str, career_di
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     roadmap = json.loads(text)
+    if not isinstance(roadmap, dict):
+        raise ValueError(f"athlete roadmap response was not a JSON object: {type(roadmap).__name__}")
     # Real, thorough shape validation - the calling route does
     # unprotected dict-key access (m["stage"], m["title"]) on this
     # result immediately after deleting the person's existing
