@@ -1,17 +1,19 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import Outcome, Listing, SocialPost
 from app.services.timeutil import utcnow
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
 VALID_STATUSES = {"applied", "interview", "rejected", "ghosted", "offer"}
  
@@ -179,6 +181,10 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db), _auth
  
 @router.get("/{user_id}/personalization-insights")
 def get_personalization_insights(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     rate_limit_by_tier(db, user_id, "explain-outcome", per_action_limit=200)
     """The genuine depth upgrade beyond factor-category reweighting -
     reads the real content of applications you actually sent, not
@@ -228,7 +234,8 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db), _a
     try:
         return generate_deep_personalization_insights(client, app_input)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate personalization insights just now: {e}")
+        _log.warning("Could not generate personalization insights just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate personalization insights just now. Please try again.")
  
  
 @router.get("/{user_id}/factor-interactions")
