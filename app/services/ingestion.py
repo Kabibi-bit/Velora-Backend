@@ -334,6 +334,8 @@ def _extract_first_real_url(cell_text: str) -> str | None:
     """Pulls the first non-image URL out of a markdown table cell
     (the Apply column contains badge-image links; we want the actual
     application URL, not the badge image URL)."""
+    if not isinstance(cell_text, str):
+        return None
     urls = re.findall(r"\]\((https?://[^)\s]+)\)", cell_text)
     for u in urls:
         if "camo.githubusercontent.com" not in u:
@@ -352,6 +354,8 @@ def _clean_markdown(text: str) -> str:
  
 def parse_simplify_markdown(markdown_text: str) -> list[dict]:
     """Parses the SimplifyJobs README table into normalized listing dicts."""
+    if not isinstance(markdown_text, str):
+        return []
     listings = []
     current_company = None
     for line in markdown_text.splitlines():
