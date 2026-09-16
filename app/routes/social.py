@@ -1,18 +1,21 @@
 import os
+import logging
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import SocialPost
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from app.services.social import reflect_on_journal_entry, reflect_on_entry_pattern
+from app.services.timeutil import utcnow
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/social", tags=["social"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 class PostIn(BaseModel):
@@ -101,7 +104,7 @@ def edit_post(post_id: str, payload: EditPostIn, db: Session = Depends(get_db), 
     if not payload.body or not payload.body.strip():
         raise HTTPException(status_code=400, detail="Entry body cannot be empty")
     post.body = payload.body.strip()
-    post.edited_at = datetime.utcnow()
+    post.edited_at = utcnow()
     db.commit()
     return {"status": "updated"}
  
@@ -129,6 +132,10 @@ class ReflectIn(BaseModel):
  
 @router.post("/posts/{post_id}/reflect")
 def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """An honest, specific AI reflection on ONE journal entry. Takes
     focus/context_summary directly in the request rather than looking
     up a stored profile - kept this way from when other roles existed,
@@ -147,7 +154,8 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
     try:
         reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a reflection just now - try again. ({e})")
+        _log.warning("Could not generate a reflection just now - try again. - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a reflection just now - try again.. Please try again.")
     return {"post_id": post_id, "reflection": reflection}
  
  
@@ -159,6 +167,10 @@ class ReflectPatternIn(BaseModel):
  
 @router.post("/posts/{user_id}/reflect-pattern")
 def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """The genuinely more valuable reflection - looks across the
     user's last several entries together for a real pattern, instead
     of restating one entry back at them.
@@ -182,6 +194,7 @@ def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depen
     try:
         reflection = reflect_on_entry_pattern(client, payload.focus, payload.context_summary, entries)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a pattern reflection just now - try again. ({e})")
+        _log.warning("Could not generate a pattern reflection just now - try again. - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a pattern reflection just now - try again.. Please try again.")
     return {"reflection": reflection, "entries_considered": len(entries)}
  
