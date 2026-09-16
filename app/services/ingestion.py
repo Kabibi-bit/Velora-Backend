@@ -317,11 +317,17 @@ TAG_KEYWORDS = [
  
  
 async def fetch_simplify_internships() -> str:
-    """Returns the raw markdown text of the internship list."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(SIMPLIFY_RAW_URL, timeout=15)
-        resp.raise_for_status()
-        return resp.text
+    """Returns the raw markdown text of the internship list. Fails SAFE:
+    the source is a GitHub-hosted file, so an outage/404/rate-limit must return
+    "" (which the markdown parser turns into zero listings) rather than raise into
+    the scan - consistent with every other fetcher in this module."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(SIMPLIFY_RAW_URL, timeout=15)
+            resp.raise_for_status()
+            return resp.text
+    except Exception:
+        return ""
  
  
 def _extract_first_real_url(cell_text: str) -> str | None:
