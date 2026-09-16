@@ -14,8 +14,6 @@ from app.services.rate_limit import rate_limit_by_tier
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/market", tags=["market"])
-# `client` is resolved lazily via module __getattr__ below, so a missing
-# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class CompanyResearchIn(BaseModel):
@@ -25,6 +23,10 @@ class CompanyResearchIn(BaseModel):
  
 @router.post("/research-company")
 def research_company_route(payload: CompanyResearchIn, _auth: dict = Depends(require_valid_token)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     if not payload.company_name.strip():
         raise HTTPException(status_code=400, detail="company_name is required")
     if not payload.role_title.strip():
@@ -46,6 +48,10 @@ class InterviewPrepIn(BaseModel):
  
 @router.post("/interview-prep")
 def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     import uuid as uuid_module
     try:
         uuid_module.UUID(payload.user_id)
@@ -81,16 +87,4 @@ def interview_prep_route(payload: InterviewPrepIn, db: Session = Depends(get_db)
         _log.warning("Could not generate interview prep just now - %s", e)
         raise HTTPException(status_code=502, detail="Could not generate interview prep just now. Please try again.")
     return prep
- 
- 
-def __getattr__(name):
-    # Lazily provide `client` so importing this module never requires the
-    # API key to be present (prevents a startup crash / port-bind failure).
-    if name == "client":
-        c = get_client()
-        if c is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
-        return c
-    raise AttributeError(name)
  
