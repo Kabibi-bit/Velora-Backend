@@ -19,8 +19,6 @@ from app.services.email_send import guess_contact_emails, send_email
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/athletics", tags=["athletics"])
-# `client` is resolved lazily via module __getattr__ below, so a missing
-# ANTHROPIC_API_KEY can never crash this module at import time.
  
 VALID_DIRECTIONS = {"play-college", "go-pro", "coach", "sports-management"}
  
@@ -35,6 +33,10 @@ class ContentPlanIn(BaseModel):
  
 @router.post("/content-coach")
 def content_coach(payload: ContentPlanIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Generates real, grounded recruiting content guidance - a
     highlight reel structure, commonly-evaluated skills/metrics for
     this sport and level, specific drills to practice, and a filming
@@ -71,6 +73,10 @@ class ProgramResearchIn(BaseModel):
  
 @router.post("/research-program")
 def research_program(payload: ProgramResearchIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """The real-search upgrade: gives Claude the actual Anthropic web
     search tool to find and cite genuine, current public information
     about a specific named program, rather than general knowledge.
@@ -216,6 +222,10 @@ class CoachOutreachIn(BaseModel):
  
 @router.post("/outreach")
 def create_outreach(payload: CoachOutreachIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Drafts a real email and cold-call script for reaching a coach or
     staff member, and stores it as a real draft - review/edit/send
     from here, same lifecycle as every other outreach draft in the
@@ -368,6 +378,10 @@ class DetectHighlightsIn(BaseModel):
  
 @router.post("/edit-plan")
 def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Not real video editing or processing - there's no video hosting
     infrastructure in this stack. This is a real, specific edit PLAN
     grounded in the athlete's own description of their footage, for
@@ -402,6 +416,10 @@ class AthleteRoadmapIn(BaseModel):
  
 @router.post("/roadmap")
 def create_athlete_roadmap(payload: AthleteRoadmapIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Generates and persists a real roadmap for this athlete -
     replaces any previous one on regeneration, same behavior as the
     candidate roadmap endpoint.
@@ -563,16 +581,4 @@ def detect_highlights(payload: DetectHighlightsIn, db: Session = Depends(get_db)
     except Exception as e:
         # never 500 into a fabricated result - return an honest failure
         return {"available": False, "moments": [], "note": f"Detection could not run: {e}. Use the clip-planning workshop.", "model_id": None}
- 
- 
-def __getattr__(name):
-    # Lazily provide `client` so importing this module never requires the
-    # API key to be present (prevents a startup crash / port-bind failure).
-    if name == "client":
-        c = get_client()
-        if c is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
-        return c
-    raise AttributeError(name)
  
