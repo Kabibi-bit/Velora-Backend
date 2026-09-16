@@ -144,11 +144,11 @@ def normalize_adzuna(raw: dict) -> dict:
     return {
         "source": "adzuna",
         "external_id": external_id,
-        "title": html.unescape(raw.get("title", "")).strip(),
-        "org": html.unescape((raw.get("company") or {}).get("display_name", "Unknown")),
+        "title": html.unescape(str(raw.get("title") or "")).strip(),
+        "org": html.unescape(str((raw.get("company") if isinstance(raw.get("company"), dict) else {}).get("display_name") or "Unknown")),
         "type": "job",  # Adzuna doesn't distinguish internships; refine via title keywords
-        "location": (raw.get("location") or {}).get("display_name"),
-        "description": html.unescape(raw.get("description", "")),
+        "location": (raw.get("location") if isinstance(raw.get("location"), dict) else {}).get("display_name"),
+        "description": html.unescape(str(raw.get("description") or "")),
         "apply_url": raw.get("redirect_url"),
         "tags": [],  # populate via extract_tags()
         "deadline": None,  # Adzuna doesn't provide deadlines
@@ -495,7 +495,7 @@ def _scholarship_passes_quality_check(raw: dict) -> tuple[bool, str]:
     if title.lower() in generic_titles:
         return False, "title is a generic category word, not a specific real name"
  
-    apply_url = (raw.get("apply_url") or "").strip()
+    apply_url = str(raw.get("apply_url") or "").strip()
     if not apply_url:
         return False, "no real apply_url found"
     if not (apply_url.startswith("http://") or apply_url.startswith("https://")):
