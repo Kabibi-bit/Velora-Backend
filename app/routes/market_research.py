@@ -34,7 +34,7 @@ def research_company(anthropic_client, company_name: str, role_title: str) -> di
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
-    findings = "".join(b.text for b in resp.content if b.type == "text").strip()
+    findings = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
     sources = []
     for block in resp.content:
@@ -80,7 +80,7 @@ def generate_interview_prep(anthropic_client, company_name: str, role_title: str
         messages=[{"role": "user", "content": prompt}],
     )
     import json
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         parsed = json.loads(text)
@@ -183,7 +183,7 @@ def research_company_leadership(anthropic_client, company_name: str) -> dict:
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
  
     sources = []
