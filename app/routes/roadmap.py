@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from app.services.rate_limit import rate_limit, rate_limit_by_tier
@@ -6,14 +7,15 @@ from app.services.tiers import require_feature
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import Profile, Listing, RoadmapMilestone, RoadmapSummary, SocialPost
 from app.services.roadmap import generate_roadmap, explain_listing_against_roadmap
 from app.services.matching import rank_listings, _terms_match, tokenize
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/roadmap", tags=["roadmap"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 def _profile_to_dict(p: Profile) -> dict:
@@ -61,7 +63,11 @@ def _compute_skill_gaps(db: Session, profile_dict: dict) -> list[str]:
  
 @router.post("/{user_id}")
 def create_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
-    rate_limit_by_tier(db, user_id, "roadmap-generate", per_action_limit=20)
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
+    rate_limit_by_tier(db, user_id, "roadmap-generate", per_action_limit=200)
     """Generates a fresh, detailed roadmap: an overall strategy summary
     plus 4-6 milestones, each with success criteria, a timeframe, a
     first action, a concrete resource, and the specific risk of
@@ -85,7 +91,8 @@ def create_roadmap(user_id: str, db: Session = Depends(get_db), _auth: dict = De
     try:
         result = generate_roadmap(client, profile_dict, skill_gaps=skill_gaps)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate a roadmap just now - try again. ({e})")
+        _log.warning("Could not generate a roadmap just now - try again. - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate a roadmap just now - try again.. Please try again.")
     milestones = result["milestones"]
     summary = result["summary"]
  
@@ -209,8 +216,12 @@ def update_milestone_status(milestone_id: str, payload: MilestoneStatusIn, db: S
  
 @router.get("/{user_id}/explain/{listing_id}")
 def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     require_feature(db, user_id, "deep_match_explanations")
-    rate_limit_by_tier(db, user_id, "roadmap-explain", per_action_limit=60)
+    rate_limit_by_tier(db, user_id, "roadmap-explain", per_action_limit=200)
     """Returns Claude's explanation of how one specific listing fits
     the user's stored roadmap.
     """
@@ -253,6 +264,7 @@ def explain_listing(user_id: str, listing_id: str, db: Session = Depends(get_db)
     try:
         explanation = explain_listing_against_roadmap(client, listing_dict, roadmap_dicts, _profile_to_dict(profile))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not compare this listing to your roadmap just now - try again. ({e})")
+        _log.warning("Could not compare this listing to your roadmap just now - try again. - %s", e)
+        raise HTTPException(status_code=502, detail="Could not compare this listing to your roadmap just now - try again.. Please try again.")
     return {"listing": listing.title, "explanation": explanation}
  
