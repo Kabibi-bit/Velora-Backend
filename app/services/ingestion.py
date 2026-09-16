@@ -281,7 +281,7 @@ async def extract_tags(description: str, anthropic_client) -> list[str]:
                 ),
             }],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text")
+        text = "".join((b.text or "") for b in resp.content if b.type == "text")
         # Force lowercase: the prompt asks for it, but LLMs don't
         # reliably obey formatting instructions, and the matcher's
         # tag comparison is case-sensitive - a stray capitalized tag
@@ -466,7 +466,7 @@ async def discover_scholarships_via_search(anthropic_client, query: str) -> list
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         results = json.loads(text)
     except Exception:
