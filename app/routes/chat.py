@@ -21,8 +21,6 @@ from app.models.db_models import Listing
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/chat", tags=["chat"])
-# `client` is resolved lazily via module __getattr__ below, so a missing
-# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class ChatIn(BaseModel):
@@ -79,6 +77,10 @@ def build_system_context(db: Session, user_id: str) -> str:
  
 @router.post("")
 def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     import uuid as uuid_module
     try:
         uuid_module.UUID(payload.user_id)
@@ -117,16 +119,4 @@ def chat(payload: ChatIn, db: Session = Depends(get_db), authorization: str = He
         print(f"Chat memory summarization/storage failed (non-fatal, reply still returned): {e}")
  
     return {"reply": reply}
- 
- 
-def __getattr__(name):
-    # Lazily provide `client` so importing this module never requires the
-    # API key to be present (prevents a startup crash / port-bind failure).
-    if name == "client":
-        c = get_client()
-        if c is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
-        return c
-    raise AttributeError(name)
  
