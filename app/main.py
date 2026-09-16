@@ -43,6 +43,7 @@ app.add_middleware(
 # take the entire API down at startup.
 import importlib
 import logging as _logging
+import traceback as _tb
 _startup_log = _logging.getLogger("velora.startup")
  
 _ROUTE_MODULES = [
@@ -52,16 +53,34 @@ _ROUTE_MODULES = [
     "market_research", "resume", "assistance", "strategy", "engagement",
     "dismissed_listings",
 ]
+# Records the load result of every router so it can be inspected at
+# /system/router-status in the browser - no need to dig through logs to see
+# whether any router got skipped and why.
+_ROUTER_STATUS = {"loaded": [], "failed": {}}
 for _name in _ROUTE_MODULES:
     try:
         _mod = importlib.import_module(f"app.routes.{_name}")
         app.include_router(_mod.router)
+        _ROUTER_STATUS["loaded"].append(_name)
     except Exception as _e:
-        # Log loudly which router failed and why, but keep starting the app.
+        # Keep starting the app, but record + log exactly which router failed.
+        _ROUTER_STATUS["failed"][_name] = f"{type(_e).__name__}: {_e}"
         _startup_log.error("ROUTER FAILED TO LOAD: app.routes.%s -> %s: %s",
                            _name, type(_e).__name__, _e)
-        import traceback as _tb
         _tb.print_exc()
+ 
+ 
+@app.get("/system/router-status")
+def router_status():
+    """Open this in a browser to see which routers loaded and which (if any)
+    failed, with the real error. all_ok is True when nothing was skipped."""
+    return {
+        "all_ok": len(_ROUTER_STATUS["failed"]) == 0,
+        "loaded_count": len(_ROUTER_STATUS["loaded"]),
+        "failed_count": len(_ROUTER_STATUS["failed"]),
+        "loaded": _ROUTER_STATUS["loaded"],
+        "failed": _ROUTER_STATUS["failed"],
+    }
  
 # system.py is a small, purely diagnostic router (the
 # /system/embeddings-status health check) - genuinely optional,
