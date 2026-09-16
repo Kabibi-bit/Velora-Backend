@@ -17,6 +17,7 @@ a much larger, higher-risk project (site-specific automation, ToS
 review per site) intentionally left out of this version.
 """
 import os
+from app.services.timeutil import utcnow
 from datetime import datetime, timedelta
  
 DEFAULT_CONFIDENCE_THRESHOLD = int(os.getenv("AUTO_APPLY_THRESHOLD", "80"))
@@ -126,7 +127,7 @@ def draft_application(anthropic_client, listing: dict, profile: dict, resume_ent
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     except Exception as e:
         # A genuine failure here (a transient API issue) must not
         # propagate uncaught - the scheduled job's per-listing loop
@@ -179,7 +180,7 @@ def decide_auto_send(confidence_pct: float, threshold: int | None = None) -> str
 def compute_sendable_at() -> datetime:
     """The undo window: even an approved application isn't 'sent' until
     this time passes, giving a window to cancel."""
-    return datetime.utcnow() + timedelta(minutes=UNDO_WINDOW_MINUTES)
+    return utcnow() + timedelta(minutes=UNDO_WINDOW_MINUTES)
  
  
 def create_application_for_match(db, anthropic_client, user_id: str, listing_id: str, auto_generated: bool = False):
@@ -380,7 +381,7 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
     except Exception as e:
@@ -507,7 +508,7 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
             model="claude-sonnet-4-6", max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
     except Exception as e:
