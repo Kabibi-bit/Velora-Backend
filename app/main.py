@@ -103,7 +103,16 @@ async def unexpected_error_handler(request: Request, exc: Exception):
  
 @app.on_event("startup")
 def on_startup():
-    start_scheduler()
+    # The background scheduler must NEVER prevent the web server from starting.
+    # If start_scheduler() throws (DB not reachable yet, APScheduler/env issue,
+    # etc.), an unwrapped failure here aborts startup so the app never binds a
+    # port -> Render reports "no open ports / timeout". Log and continue: the API
+    # comes up regardless; the daily scan simply won't run until the cause is fixed.
+    import logging
+    try:
+        start_scheduler()
+    except Exception as e:
+        logging.getLogger("velora").warning("Scheduler failed to start (non-fatal, API still serving): %s", e)
  
  
 @app.get("/health")
