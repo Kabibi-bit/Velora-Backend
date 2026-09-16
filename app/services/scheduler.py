@@ -652,7 +652,11 @@ def run_scan_for_all_users():
  
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES)
+    scheduler.add_job(
+        run_scan_for_all_users, "interval", minutes=SCAN_INTERVAL_MINUTES,
+        max_instances=1,  # never run two scans at once (explicit; also APScheduler default)
+        coalesce=True,    # if runs pile up (e.g. after downtime), collapse to a single catch-up run
+    )
     scheduler.start()
     return scheduler
  
