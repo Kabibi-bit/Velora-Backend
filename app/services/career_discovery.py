@@ -150,5 +150,5 @@ def explain_direction_deep(anthropic_client, direction: dict, answers: dict) -> 
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    return "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
