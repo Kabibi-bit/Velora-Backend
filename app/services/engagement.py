@@ -76,6 +76,8 @@ Return ONLY valid JSON, nothing else, no markdown fences, no commentary."""
         parsed = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValueError(f"Engagement suggestion response was not valid JSON: {e}")
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Engagement suggestion response was not a JSON object: {type(parsed).__name__}")
  
     if not isinstance(parsed.get("drafted_question"), str) or not parsed["drafted_question"].strip():
         raise ValueError(f"Engagement suggestion response is missing a real drafted_question: {parsed}")
