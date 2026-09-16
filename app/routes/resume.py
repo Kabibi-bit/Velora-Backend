@@ -1,16 +1,20 @@
 import os
+import logging
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit, rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import ResumeEntry, ResumeDocument, Profile
+from app.services.timeutil import utcnow
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/resume", tags=["resume"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 class ResumeEntryIn(BaseModel):
@@ -95,7 +99,7 @@ def update_entry(entry_id: str, payload: ResumeEntryUpdate, db: Session = Depend
     verify_token_belongs_to_user(str(entry.user_id), authorization)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(entry, field, value)
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = utcnow()
     db.commit()
     return {"updated": True}
  
@@ -118,6 +122,11 @@ def delete_entry(entry_id: str, db: Session = Depends(get_db), authorization: st
  
 @router.post("/generate/{user_id}")
 def generate_resume(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
+    rate_limit_by_tier(db, user_id, "resume-generate", per_action_limit=200)
     """Polishes the person's own real entries into resume language -
     never generates work history from scratch. Requires at least one
     real entry; there is no fallback that invents one.
@@ -181,14 +190,15 @@ def generate_resume(user_id: str, db: Session = Depends(get_db), _auth: dict = D
         summary_line = summary_result["summary"]
         summary_flagged_numbers = summary_result["flagged_numbers"]
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate the resume just now: {e}")
+        _log.warning("Could not generate the resume just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate the resume just now. Please try again.")
  
     doc = db.query(ResumeDocument).filter(ResumeDocument.user_id == user_id).first()
     if doc:
         doc.summary_line = summary_line
         doc.polished_entries = polished_entries
         doc.entries_snapshot = entries_snapshot
-        doc.generated_at = datetime.utcnow()
+        doc.generated_at = utcnow()
     else:
         doc = ResumeDocument(
             user_id=user_id, summary_line=summary_line,
@@ -526,6 +536,10 @@ def download_tailored_resume_docx(user_id: str, listing_id: str, db: Session = D
  
 @router.get("/{user_id}/cover-letter/{listing_id}")
 def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """A real cover letter for one specific listing, grounded only in
     the person's own real entries and stated goal - the concrete
     answer to a documented, verified competitor failure where their
