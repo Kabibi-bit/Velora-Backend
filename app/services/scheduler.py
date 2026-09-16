@@ -378,7 +378,35 @@ async def _pull_and_store_new_listings(db: Session):
     except Exception as e:
         print(f"NCAA target-program ingestion failed (non-fatal): {e}")
  
-    db.commit()
+    # Resilient commit: normally one batch commit. But if a single malformed row
+    # violates a DB constraint, a plain commit() rolls back the ENTIRE session -
+    # losing every listing from every source this scan. So on failure, roll back
+    # and re-commit the pending rows one at a time, skipping only the bad one(s),
+    # so one bad row can't discard a whole scan's worth of good listings.
+    try:
+        db.commit()
+    except Exception as batch_err:
+        print(f"Batch commit failed ({batch_err}); retrying row-by-row to save the good rows.")
+        # Capture the pending Listing rows BEFORE rolling back - rollback expunges
+        # db.new, so snapshot the objects first, then rollback, then re-add each.
+        pending = [obj for obj in list(db.new) if isinstance(obj, Listing)]
+        # detach them so they survive the rollback, then re-add individually
+        snapshot = [{
+            "source": o.source, "external_id": o.external_id, "title": o.title, "org": o.org,
+            "type": o.type, "location": o.location, "description": o.description, "tags": o.tags,
+            "deadline": o.deadline, "apply_url": o.apply_url, "embedding": o.embedding,
+        } for o in pending]
+        db.rollback()
+        saved = 0
+        for row in snapshot:
+            try:
+                db.add(Listing(**row))
+                db.commit()
+                saved += 1
+            except Exception as row_err:
+                db.rollback()
+                print(f"  Skipped a bad listing row (source={row.get('source')}, ext={row.get('external_id')}): {row_err}")
+        stored_count = saved
     return stored_count
  
  
