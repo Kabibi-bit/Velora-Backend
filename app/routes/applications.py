@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from app.services.rate_limit import rate_limit_by_tier
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
 from app.services.ai_client import get_client
@@ -67,7 +67,7 @@ def accept_match(payload: AcceptIn, db: Session = Depends(get_db), authorization
 class DraftIn(BaseModel):
     user_id: str
     listing_id: str
-    confidence_pct: float
+    confidence_pct: float = Field(ge=0, le=100)
  
  
 @router.post("/draft")
