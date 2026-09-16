@@ -5,13 +5,13 @@ from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import SavedListing, Listing
 from app.services.auto_apply import create_application_for_match
  
 router = APIRouter(prefix="/saved", tags=["saved"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
  
  
 class SaveIn(BaseModel):
@@ -21,6 +21,10 @@ class SaveIn(BaseModel):
  
 @router.post("")
 def save_listing(payload: SaveIn, db: Session = Depends(get_db), authorization: str = Header(None)):
+    client = get_client()
+    if client is None:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
     """Stars a listing - this is what backs the frontend's star icon
     and Saved panel. Starring ALSO automatically drafts a tailored
     application for that match (via create_application_for_match),
