@@ -1,24 +1,29 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit, rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
+from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import CareerDiscoveryResult, Listing
 from app.services.career_discovery import score_career_directions, explain_direction_deep, CAREER_DIRECTIONS
  
+_log = logging.getLogger("velora")
 router = APIRouter(prefix="/career-discovery", tags=["career-discovery"])
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# `client` is resolved lazily via module __getattr__ below, so a missing
+# ANTHROPIC_API_KEY can never crash this module at import time.
  
  
 class DiscoveryAnswersIn(BaseModel):
     user_id: str
-    people: int
-    data: int
-    creative: int
-    structure: int
+    people: int = Field(default=0, ge=0, le=3)
+    data: int = Field(default=0, ge=0, le=3)
+    creative: int = Field(default=0, ge=0, le=3)
+    structure: int = Field(default=0, ge=0, le=3)
     free_text: str = Field(default="", max_length=4000)
  
  
@@ -69,6 +74,7 @@ class ExplainDirectionIn(BaseModel):
  
 @router.post("/{user_id}/explain")
 def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    rate_limit_by_tier(db, user_id, "career-explain", per_action_limit=200)
     """On-demand, real Claude explanation for one direction - only
     called when someone actually wants more than the instant score,
     same cost-conscious pattern as the deep match explanation.
@@ -89,6 +95,19 @@ def explain_direction(user_id: str, payload: ExplainDirectionIn, db: Session = D
     try:
         explanation = explain_direction_deep(client, direction, result.answers)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not generate this explanation just now: {e}")
+        _log.warning("Could not generate this explanation just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not generate this explanation just now. Please try again.")
     return {"direction_id": payload.direction_id, "explanation": explanation}
+ 
+ 
+def __getattr__(name):
+    # Lazily provide `client` so importing this module never requires the
+    # API key to be present (prevents a startup crash / port-bind failure).
+    if name == "client":
+        c = get_client()
+        if c is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="AI service is not configured. Please try again later.")
+        return c
+    raise AttributeError(name)
  
