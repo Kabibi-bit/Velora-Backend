@@ -40,7 +40,7 @@ def reflect_on_journal_entry(anthropic_client, focus: str, context_summary: str 
         model="claude-sonnet-4-6", max_tokens=200,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    return "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
  
 def reflect_on_entry_pattern(anthropic_client, focus: str, context_summary: str | None, entries: list[dict]) -> str:
@@ -65,5 +65,5 @@ def reflect_on_entry_pattern(anthropic_client, focus: str, context_summary: str 
         model="claude-sonnet-4-6", max_tokens=250,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    return "".join((b.text or "") for b in resp.content if b.type == "text").strip()
  
