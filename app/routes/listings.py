@@ -294,7 +294,7 @@ def explain_match_deep(user_id: str, listing_id: str, db: Session = Depends(get_
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
-        explanation = "".join(b.text for b in resp.content if b.type == "text").strip()
+        explanation = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
     except Exception as e:
         _log.warning("Could not generate this explanation just now - %s", e)
         raise HTTPException(status_code=502, detail="Could not generate this explanation just now. Please try again.")
@@ -366,7 +366,7 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         import json
         parsed = json.loads(text)
