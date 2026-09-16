@@ -541,17 +541,31 @@ def run_scan_for_all_users():
                     auto_count = 0
                     outreach_count = 0
                     for listing in ranked:
-                        outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
-                        if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
-                            auto_count += 1
+                        # Isolate each listing: a failure on ONE listing (e.g. a DB
+                        # constraint on its application row) must not skip the
+                        # remaining listings for this user - the outer per-user
+                        # try/except alone would abort the whole loop, losing every
+                        # subsequent auto-application. Per-listing isolation matches
+                        # this file's "one failure shouldn't cancel everything" design.
+                        try:
+                            outcome = create_application_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
+                            if not outcome.get("error") and not outcome.get("already_existed") and outcome.get("status") == "approved":
+                                auto_count += 1
+                        except Exception as _app_err:
+                            db.rollback()
+                            print(f"    Skipped auto-apply for listing {listing.get('id')}: {_app_err}")
  
                         # Auto mode drafts outreach for the same eligible
                         # matches while the user is away - queued in
                         # Workshop, status stays 'drafted' until the user
                         # comes back and explicitly clicks send.
-                        outreach_result = draft_outreach_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
-                        if not outreach_result.get("error") and not outreach_result.get("already_existed"):
-                            outreach_count += 1
+                        try:
+                            outreach_result = draft_outreach_for_match(db, anthropic_client, str(user.id), listing["id"], auto_generated=True)
+                            if not outreach_result.get("error") and not outreach_result.get("already_existed"):
+                                outreach_count += 1
+                        except Exception as _out_err:
+                            db.rollback()
+                            print(f"    Skipped auto-outreach for listing {listing.get('id')}: {_out_err}")
                     print(f"    Auto Apply: {auto_count} new application(s) auto-approved for {user.email}")
                     print(f"    Auto Outreach: {outreach_count} new outreach draft(s) queued for {user.email}")
                     # Closes a real, confirmed gap: notifications.py's own
