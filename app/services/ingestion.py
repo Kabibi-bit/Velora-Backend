@@ -444,18 +444,23 @@ async def discover_scholarships_via_search(anthropic_client, query: str) -> list
         "to round up\n\n"
         "Return ONLY the JSON array, nothing else, no markdown fences, no commentary."
     )
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=1500,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    # Fail SAFE on BOTH the API call and the parse: a search/Claude outage,
+    # rate-limit, or auth failure must not raise into the scan (the json.loads
+    # guard alone left the messages.create call unprotected). Return [] on any error.
+    if anthropic_client is None:
+        return []
     import json
     try:
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=1500,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         results = json.loads(text)
-    except json.JSONDecodeError:
-        return []  # fail gracefully rather than crash the whole scan over one malformed response
+    except Exception:
+        return []  # fail gracefully rather than crash the whole scan
     return results if isinstance(results, list) else []
  
  
