@@ -599,7 +599,7 @@ def run_scan_for_all_users():
                 # fail-safe internally; the outer try is belt-and-suspenders.
                 try:
                     from app.services.weekly_digest import maybe_send_weekly_digest
-                    from app.models.db_models import MatchScore, Listing, SavedListing, Application, Notification as _Notif
+                    from app.models.db_models import MatchScore, Listing, SavedListing, Application, AthleteEvent, Notification as _Notif
                     _digest_profile = (
                         db.query(Profile)
                         .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
@@ -607,7 +607,7 @@ def run_scan_for_all_users():
                     )
                     _digest_models = {
                         "MatchScore": MatchScore, "Listing": Listing, "SavedListing": SavedListing,
-                        "Application": Application, "Notification": _Notif, "_profile": _digest_profile,
+                        "Application": Application, "AthleteEvent": AthleteEvent, "Notification": _Notif, "_profile": _digest_profile,
                     }
                     _digest_result = maybe_send_weekly_digest(db, _digest_models, user)
                     if _digest_result.get("status") == "sent":
