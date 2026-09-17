@@ -468,7 +468,7 @@ def _posting_age_days(listing: dict):
 def assess_listing_signal(listing: dict) -> dict:
     """Freshness + ghost-risk assessment for one listing. Honest bands, never a fake %."""
     age = _posting_age_days(listing)
-    dq = listing.get("data_quality") or {}
+    dq = listing.get("data_quality") if isinstance(listing.get("data_quality"), dict) else {}
     q = dq.get("tier")
     desc = listing.get("description")
     has_desc = bool(desc and len(str(desc).strip()) > 40)
@@ -765,7 +765,8 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         deadline_note = f" It also closes in {days_left} day{'s' if days_left != 1 else ''}, so it's worth acting on soon if you're interested."
  
     quality_note = ""
-    if match.get("data_quality", {}).get("tier") == "thin":
+    _dq2 = match.get("data_quality"); _dq2 = _dq2 if isinstance(_dq2, dict) else {}
+    if _dq2.get("tier") == "thin":
         quality_note = " Worth knowing: this listing itself has very little real data behind it (a short title, few tags, no real description) - treat this score as a rough starting point, not a confident read."
  
     if not clauses:
