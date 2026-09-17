@@ -395,13 +395,13 @@ def assess_listing_data_quality(listing: dict) -> dict:
     reasons = []
     points = 0
  
-    title = (listing.get("title") or "").strip()
+    title = str(listing.get("title") or "").strip()
     if len(title.split()) >= 3:
         points += 1
     else:
         reasons.append("title is very short")
  
-    tags = listing.get("tags") or []
+    tags = listing.get("tags") if isinstance(listing.get("tags"), (list, tuple)) else []
     if len(tags) >= 4:
         points += 2
     elif len(tags) >= 2:
@@ -409,7 +409,7 @@ def assess_listing_data_quality(listing: dict) -> dict:
     else:
         reasons.append("very few tags to match against")
  
-    description = (listing.get("description") or "").strip()
+    description = str(listing.get("description") or "").strip()
     if len(description) >= 200:
         points += 2
     elif len(description) >= 50:
