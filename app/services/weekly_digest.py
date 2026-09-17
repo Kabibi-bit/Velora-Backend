@@ -47,31 +47,47 @@ def _already_sent_recently(db, Notification, user_id) -> bool:
         return True
  
  
-def _soonest_deadline(db, Listing, SavedListing, user_id):
-    """The nearest upcoming deadline among the user's saved listings, or None."""
+def _soonest_deadline(db, Listing, SavedListing, user_id, AthleteEvent=None):
+    """The nearest upcoming deadline the user has - across their saved listings
+    AND (for athletes) their tracked events (tryouts, camps, application
+    deadlines). Returns the single soonest, or None."""
+    best = None
+    today = date.today()
+ 
+    def _consider(title, d):
+        nonlocal best
+        try:
+            dd = date.fromisoformat(d) if isinstance(d, str) else d
+            if not isinstance(dd, date):
+                return
+        except (ValueError, TypeError):
+            return
+        days = (dd - today).days
+        if days < 0:
+            return
+        if best is None or days < best["days"]:
+            best = {"title": title or "a tracked item", "days": days}
+ 
+    # saved listings (all tracks)
     try:
-        saved = db.query(SavedListing).filter(SavedListing.user_id == user_id).all()
-        best = None
-        today = date.today()
-        for s in saved:
+        for s in db.query(SavedListing).filter(SavedListing.user_id == user_id).all():
             listing = db.query(Listing).filter(Listing.id == s.listing_id).first()
-            if not listing or not getattr(listing, "deadline", None):
-                continue
-            dl = listing.deadline
-            try:
-                d = date.fromisoformat(dl) if isinstance(dl, str) else dl
-                if not isinstance(d, date):
-                    continue
-            except (ValueError, TypeError):
-                continue
-            days = (d - today).days
-            if days < 0:
-                continue
-            if best is None or days < best["days"]:
-                best = {"title": getattr(listing, "title", "a saved listing"), "days": days}
-        return best
+            if listing and getattr(listing, "deadline", None):
+                _consider(getattr(listing, "title", None), listing.deadline)
     except Exception:
-        return None
+        pass
+ 
+    # athlete events (tryouts / camps / application deadlines) - a real, time-
+    # sensitive nudge that was previously invisible to the digest.
+    if AthleteEvent is not None:
+        try:
+            for e in db.query(AthleteEvent).filter(AthleteEvent.user_id == user_id).all():
+                if getattr(e, "event_date", None):
+                    _consider(getattr(e, "title", None), e.event_date)
+        except Exception:
+            pass
+ 
+    return best
  
  
 def build_digest_summary(db, models, user_id) -> dict:
@@ -114,7 +130,7 @@ def build_digest_summary(db, models, user_id) -> dict:
     except Exception:
         pass
  
-    summary["soonest_deadline"] = _soonest_deadline(db, Listing, SavedListing, user_id)
+    summary["soonest_deadline"] = _soonest_deadline(db, Listing, SavedListing, user_id, models.get("AthleteEvent"))
  
     if Application is not None:
         try:
