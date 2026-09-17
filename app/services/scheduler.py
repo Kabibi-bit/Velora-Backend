@@ -593,6 +593,27 @@ def run_scan_for_all_users():
                             db.commit()
                     except Exception as e:
                         print(f"    Notification write failed (non-fatal): {e}")
+ 
+                # Weekly digest: at most once per 7 days per user, only when there's
+                # something real to say, respecting the mute preference. Fully
+                # fail-safe internally; the outer try is belt-and-suspenders.
+                try:
+                    from app.services.weekly_digest import maybe_send_weekly_digest
+                    from app.models.db_models import MatchScore, Listing, SavedListing, Application, Notification as _Notif
+                    _digest_profile = (
+                        db.query(Profile)
+                        .filter(Profile.user_id == user.id, Profile.is_current == True)  # noqa: E712
+                        .first()
+                    )
+                    _digest_models = {
+                        "MatchScore": MatchScore, "Listing": Listing, "SavedListing": SavedListing,
+                        "Application": Application, "Notification": _Notif, "_profile": _digest_profile,
+                    }
+                    _digest_result = maybe_send_weekly_digest(db, _digest_models, user)
+                    if _digest_result.get("status") == "sent":
+                        print(f"    Weekly digest sent to {user.email}")
+                except Exception as e:
+                    print(f"    Weekly digest skipped (non-fatal): {e}")
             except Exception as e:
                 print(f"  Scan failed for {user.email}, continuing with remaining users: {e}")
         print("Daily scan complete.")
