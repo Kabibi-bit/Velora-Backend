@@ -79,13 +79,14 @@ FEATURE_DAILY_CAPS = {
     "engagement-draft":   {"free": 8,  "pro": 60,  "max": 1000},
     "athlete-content":    {"free": 8,  "pro": 60,  "max": 1000},
     "athlete-roadmap":    {"free": 3,  "pro": 25,  "max": 1000},
+    "highlight-detection":{"free": 2,  "pro": 15,  "max": 100},  # video analysis: expensive, capped low
 }
  
 # Overall daily AI budget across ALL features (a backstop, not the primary cap).
 # Kept comfortably above the sum a normal Free user would reach via per-feature
 # caps, so it only catches genuinely abnormal usage.
 TIER_LIMITS = {
-    "free": {"ai_actions_per_day": 25, "auto_drafts_per_day": 0},
+    "free": {"ai_actions_per_day": 10, "auto_drafts_per_day": 0},
     "pro": {"ai_actions_per_day": 250, "auto_drafts_per_day": 10},
     "max": {"ai_actions_per_day": 5000, "auto_drafts_per_day": 5000},
 }
