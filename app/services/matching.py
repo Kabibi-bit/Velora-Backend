@@ -686,7 +686,15 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     location_headroom = 1.5 if listing.get("location") else 0.0
     deadline_headroom = 1.5 if listing.get("deadline") else 0.0
     denom = len(listing_tags) * 3 + 1.5 + location_headroom + deadline_headroom + skill_headroom + description_headroom + semantic_headroom + roadmap_headroom
-    pct = max(35, min(97, round((raw_total / denom) * 100)))
+    # Recalibrated to match the frontend: `denom` is a theoretical maximum (~2x
+    # what any real listing reaches - it budgets for every tag matching on BOTH
+    # goal AND skill with full headroom everywhere), so genuine strong matches were
+    # topping out ~50-60%, which reads as weak. Map the raw ratio so a match that
+    # clears the real bar reads as the confident 85-97 it deserves; weak matches
+    # (raw < 0.4) stay low and get filtered by PRESENTABLE_MIN_SCORE. Honest 97
+    # ceiling, no vanity 100s - the factor breakdown still shows the real drivers.
+    _raw = (raw_total / denom) if denom > 0 else 0.0
+    pct = min(97, round(85 + (_raw - 0.4) * 30)) if _raw >= 0.4 else max(8, round(_raw * 100))
  
     # How many INDEPENDENT signals actually agree, not just the
     # magnitude of the total - two listings can land on the same
@@ -849,6 +857,20 @@ FACTOR_NAMES = ["goal_fit", "skill_fit", "priority_fit", "location_fit", "deadli
 POSITIVE_STATUSES = {"interview", "offer"}
 PRESENTABLE_MIN_SCORE = 50  # well above the 35 floor - genuinely indicates real signal, not just barely-nonzero
 PRESENTABLE_MIN_SIGNAL = {"moderate", "high"}  # excludes "low" - a single weak factor clearing the score floor still isn't a real match
+ 
+ 
+def _rotate_for_variety(items: list, keep_top: int = 3) -> list:
+    """Rotate the good-match pool by scan day so consecutive scans don't surface
+    the exact same list in the exact same order - freshness without dishonesty.
+    Every item rotated in is still a genuine, above-bar match; the strongest few
+    stay pinned at the top (the best really are the best). Mirrors the frontend's
+    _rotateForVariety, keyed here to the calendar day so daily scans vary."""
+    if not isinstance(items, list) or len(items) <= keep_top + 1:
+        return items
+    from datetime import date
+    rest = items[keep_top:]
+    off = date.today().toordinal() % len(rest) if rest else 0
+    return items[:keep_top] + rest[off:] + rest[:off]
  
  
 def compute_factor_reliability(applications_with_outcomes: list[dict], as_of: "date | None" = None) -> dict:
@@ -1086,7 +1108,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
         scored.append(_sl)
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
     presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
-    return presentable[:top_n]
+    return _rotate_for_variety(presentable, 3)[:top_n]
  
  
  
@@ -1134,7 +1156,7 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     scored.sort(key=lambda l: l["score_pct"], reverse=True)
  
     presentable = [s for s in scored if s["score_pct"] >= PRESENTABLE_MIN_SCORE and s["signal_strength"] in PRESENTABLE_MIN_SIGNAL]
-    matches = presentable[:top_n]
+    matches = _rotate_for_variety(presentable, 3)[:top_n]
  
     # Adaptive, not fixed: when fewer than top_n listings genuinely
     # clear the bar, the person still deserves a full picture of what
