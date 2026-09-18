@@ -66,13 +66,21 @@ def score_career_directions(answers: dict, all_listing_tags: list[list[str]]) ->
     used to compute a real 'related opportunities' count per direction.
     """
     free_text_tokens = _tokenize(answers.get("free_text", ""))
+    # Coerce each work-style dimension to a real number (default 1): a missing key
+    # already defaulted to 1, but an explicit JSON null (an unanswered slider) made
+    # answers.get(k, 1) return None, and abs(dim - None) raised a TypeError. This
+    # keeps the missing->1 behavior and additionally makes null/garbage safe.
+    def _dim(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else 1
+    ans_people, ans_data = _dim(answers.get("people")), _dim(answers.get("data"))
+    ans_creative, ans_structure = _dim(answers.get("creative")), _dim(answers.get("structure"))
     results = []
     for direction in CAREER_DIRECTIONS:
         dim_diff = (
-            abs(direction["dims"]["people"] - answers.get("people", 1))
-            + abs(direction["dims"]["data"] - answers.get("data", 1))
-            + abs(direction["dims"]["creative"] - answers.get("creative", 1))
-            + abs(direction["dims"]["structure"] - answers.get("structure", 1))
+            abs(direction["dims"]["people"] - ans_people)
+            + abs(direction["dims"]["data"] - ans_data)
+            + abs(direction["dims"]["creative"] - ans_creative)
+            + abs(direction["dims"]["structure"] - ans_structure)
         )
         max_diff = 12
         pct = round((1 - (dim_diff / max_diff)) * 100)
