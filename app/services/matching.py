@@ -9,6 +9,7 @@ score is now a transparent, structured composite of six named
 factors, each independently inspectable - not a black-box percentage
 with a plausible-sounding paragraph bolted on afterward.
 """
+import math
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -502,7 +503,10 @@ def assess_listing_signal(listing: dict) -> dict:
 def compute_signal_score(scored_listing: dict) -> dict:
     """The Signal Score: 0-97, honest, capped. Fit adjusted for freshness + ghost risk."""
     fit = scored_listing.get("score_pct")
-    fit = fit if isinstance(fit, (int, float)) else 0
+    # math.isfinite, not just isinstance: isinstance(nan, float) is True, so a NaN
+    # score_pct slipped through and produced a NaN signal_score - defeating the
+    # defaulting this guard exists to do. Mirrors the frontend's Number.isFinite fix.
+    fit = fit if isinstance(fit, (int, float)) and math.isfinite(fit) else 0
     sig = assess_listing_signal(scored_listing)
  
     score = float(fit)
@@ -568,7 +572,14 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     if _has_dealbreaker(listing_tags, profile.get("dealbreakers") or ""):
         return None
  
-    goal_tokens = tokenize(f"{profile['northstar']} {profile.get('final_idea', '')}")
+    # Defensive: every OTHER profile field here is read with .get() and a
+    # default, and explain_score() already reads northstar as
+    # `profile.get("northstar") or ""`. score_listing was the lone place that
+    # subscripted it directly, so a profile dict assembled without northstar
+    # (a partial/legacy row, an internal caller) crashed the core scorer here
+    # while the frontend's scoreListing tolerated it via `profile.northstar || ''`.
+    # Match that tolerance and that internal consistency.
+    goal_tokens = tokenize(f"{profile.get('northstar') or ''} {profile.get('final_idea', '')}")
     skill_tokens = tokenize(profile.get("skills", ""))
     priorities = profile.get("priorities") or []
  
@@ -591,9 +602,9 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
             double_match_count += 1
  
     priority_fit = 0.0
-    if "learning" in priorities and listing["type"] in ("internship", "college"):
+    if "learning" in priorities and listing.get("type") in ("internship", "college"):
         priority_fit += 1.5
-    if "pay" in priorities and listing["type"] == "job":
+    if "pay" in priorities and listing.get("type") == "job":
         priority_fit += 1.5
  
     location_fit, location_reason = _location_fit_factor(listing, profile)
@@ -760,9 +771,9 @@ def explain_score(listing: dict, match: dict, profile: dict) -> str:
         clauses.append(f"directly advances Stage {ra['stage']} of your roadmap (\"{ra['title']}\")")
  
     priorities = profile.get("priorities") or []
-    if "pay" in priorities and listing["type"] == "job":
+    if "pay" in priorities and listing.get("type") == "job":
         clauses.append("is a full-time role, aligned with pay being a top priority for you")
-    if "learning" in priorities and listing["type"] in ("internship", "college"):
+    if "learning" in priorities and listing.get("type") in ("internship", "college"):
         clauses.append("is structured around hands-on learning, which you said matters most right now")
     if factors.get("location_reason"):
         clauses.append(f"is {factors['location_reason']}")
@@ -1091,7 +1102,7 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
     dismissed_ids = dismissed_ids or set()
     scored = []
     for listing in listings:
-        if listing["type"] not in profile.get("target_types", []):
+        if listing.get("type") not in profile.get("target_types", []):
             continue
         if str(listing["id"]) in dismissed_ids:
             continue
@@ -1101,7 +1112,12 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
-        match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
+        # Honest 97 ceiling holds AFTER personalization too: score_listing caps
+        # the raw pct at 97 (no vanity 100s), but tag_weights adjustment used to
+        # be clamped to min(100, ...), so a strong match with positive learned
+        # tag weights could surface as 98-100 - silently breaching the exact
+        # ceiling the recalibration promises. Clamp to 97 to keep the invariant.
+        match["score_pct"] = max(0, min(97, round(match["score_pct"] + adjustment)))
         match["rationale"] = explain_score(listing, match, profile)
         _sl = {**listing, **match}
         _sl.update(compute_signal_score(_sl))
@@ -1138,7 +1154,7 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
     dismissed_ids = dismissed_ids or set()
     scored = []
     for listing in listings:
-        if listing["type"] not in profile.get("target_types", []):
+        if listing.get("type") not in profile.get("target_types", []):
             continue
         if str(listing["id"]) in dismissed_ids:
             continue
@@ -1148,7 +1164,12 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
         if match is None:
             continue
         adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
-        match["score_pct"] = max(0, min(100, round(match["score_pct"] + adjustment)))
+        # Honest 97 ceiling holds AFTER personalization too: score_listing caps
+        # the raw pct at 97 (no vanity 100s), but tag_weights adjustment used to
+        # be clamped to min(100, ...), so a strong match with positive learned
+        # tag weights could surface as 98-100 - silently breaching the exact
+        # ceiling the recalibration promises. Clamp to 97 to keep the invariant.
+        match["score_pct"] = max(0, min(97, round(match["score_pct"] + adjustment)))
         match["rationale"] = explain_score(listing, match, profile)
         _sl = {**listing, **match}
         _sl.update(compute_signal_score(_sl))
