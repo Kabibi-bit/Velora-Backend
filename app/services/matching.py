@@ -15,6 +15,17 @@ from datetime import date, datetime
 from typing import Optional
 from app.services.embeddings import semantic_similarity_factor
  
+ 
+def _round_half_up(x: float) -> int:
+    """JavaScript's Math.round rounds .5 UP (toward +inf); Python's built-in
+    round() uses banker's rounding (half to even). The frontend scorer uses
+    Math.round, so a score landing exactly on N.5 rendered as N+1 on the frontend
+    but N on the backend - a real 1-point FE/BE divergence on exact-half values
+    (e.g. raw 0.5833 -> 90.5 -> 91 on FE, 90 on BE). floor(x + 0.5) reproduces
+    Math.round exactly for the always-non-negative percentages here, keeping the
+    two layers bit-identical on identical input."""
+    return math.floor(x + 0.5)
+ 
 # Honestly scoped: a curated set of common, well-known synonyms in
 # tech/career contexts - not a claim of real NLP or embeddings. Pure
 # substring matching (the previous approach) misses obvious pairs
@@ -581,6 +592,12 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # Match that tolerance and that internal consistency.
     goal_tokens = tokenize(f"{profile.get('northstar') or ''} {profile.get('final_idea', '')}")
     skill_tokens = tokenize(profile.get("skills", ""))
+    # Dedupe once (order-preserving). The tag loop below uses any(...) over these
+    # (short-circuit, so duplicates can't change the result) and the description
+    # factor already de-dupes via set(), so this is purely a speed guard keeping the
+    # O(tags x tokens) hot path bounded for a repetitive profile. Mirrors the FE.
+    goal_tokens = list(dict.fromkeys(goal_tokens))
+    skill_tokens = list(dict.fromkeys(skill_tokens))
     priorities = profile.get("priorities") or []
  
     goal_fit, skill_fit = 0.0, 0.0
@@ -705,7 +722,9 @@ def score_listing(listing: dict, profile: dict, factor_weights: dict | None = No
     # (raw < 0.4) stay low and get filtered by PRESENTABLE_MIN_SCORE. Honest 97
     # ceiling, no vanity 100s - the factor breakdown still shows the real drivers.
     _raw = (raw_total / denom) if denom > 0 else 0.0
-    pct = min(97, round(85 + (_raw - 0.4) * 30)) if _raw >= 0.4 else max(8, round(_raw * 100))
+    # _round_half_up (not round): match the frontend's Math.round so an exact-half
+    # score is identical on both layers. See _round_half_up.
+    pct = min(97, _round_half_up(85 + (_raw - 0.4) * 30)) if _raw >= 0.4 else max(8, _round_half_up(_raw * 100))
  
     # How many INDEPENDENT signals actually agree, not just the
     # magnitude of the total - two listings can land on the same
