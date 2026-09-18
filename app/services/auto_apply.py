@@ -165,7 +165,11 @@ def compute_composite_confidence(match_score_pct: float) -> int:
     pass-through, kept as its own function so future confidence
     adjustments have one clear place to live.
     """
-    return min(100, round(match_score_pct))
+    # Honest 97 ceiling, consistent with score_listing and rank_listings: this
+    # confidence is a pass-through of match_score_pct (already <= 97), so 97 is
+    # the correct clamp - min(100, ...) could only ever have surfaced a >97
+    # value that upstream shouldn't produce, contradicting the no-vanity-100s rule.
+    return min(97, round(match_score_pct))
  
  
 def decide_auto_send(confidence_pct: float, threshold: int | None = None) -> str:
