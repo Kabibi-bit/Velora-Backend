@@ -50,6 +50,10 @@ def accept_match(payload: AcceptIn, db: Session = Depends(get_db), authorization
         uuid_module.UUID(payload.listing_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Listing not found")
+    # Meter this paid AI drafting (was unmetered - it's the primary "apply"/star
+    # action, so the highest-traffic gap). Matches the sibling /draft route's cap.
+    # Fails open.
+    rate_limit_by_tier(db, payload.user_id, "application-draft", per_action_limit=200)
     result = create_application_for_match(db, client, payload.user_id, payload.listing_id)
  
     if result.get("error") == "no_profile":
@@ -297,6 +301,9 @@ def explain_outcome(application_id: str, db: Session = Depends(get_db), authoriz
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
     verify_token_belongs_to_user(str(app_record.user_id), authorization)
+    # Meter this paid AI autopsy (was unmetered). Fails open; shares the
+    # "explain-outcome" tier cap, consistent with personalization-insights.
+    rate_limit_by_tier(db, str(app_record.user_id), "explain-outcome", per_action_limit=200)
  
     outcome = (
         db.query(Outcome)
