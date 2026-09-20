@@ -7,7 +7,7 @@ from datetime import datetime
  
 from sqlalchemy import (
     Column, String, Text, ForeignKey, DateTime, Numeric, Integer,
-    ARRAY, Boolean, Date
+    ARRAY, Boolean, Date, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
@@ -148,6 +148,13 @@ class ChatMemory(Base):
  
 class Application(Base):
     __tablename__ = "applications"
+    # One application per (user, listing). The code dedups via a check-then-insert
+    # ("already_existed"), which races: two concurrent applies (a double-click, or the
+    # auto-apply scan racing a manual apply) both pass the "existing?" check and insert
+    # two rows - a duplicate AI draft plus polluted calibration. This DB constraint is
+    # the real guarantee; the insert path catches the IntegrityError and returns the
+    # existing row. (Requires db/schema_additions_dedup_constraints.sql on existing DBs.)
+    __table_args__ = (UniqueConstraint("user_id", "listing_id", name="uq_applications_user_listing"),)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
@@ -165,6 +172,9 @@ class Application(Base):
  
 class SavedListing(Base):
     __tablename__ = "saved_listings"
+    # One save per (user, listing) - the check-then-insert in save_listing races the
+    # same way. DB-enforced; the route catches the IntegrityError as "already saved".
+    __table_args__ = (UniqueConstraint("user_id", "listing_id", name="uq_saved_listings_user_listing"),)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
@@ -179,6 +189,9 @@ class DismissedListing(Base):
     all - dismissal and application are two separate, real actions.
     """
     __tablename__ = "dismissed_listings"
+    # One dismissal per (user, listing) - same check-then-insert race. DB-enforced;
+    # the route catches the IntegrityError as "already dismissed".
+    __table_args__ = (UniqueConstraint("user_id", "listing_id", name="uq_dismissed_listings_user_listing"),)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
