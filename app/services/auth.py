@@ -2,15 +2,31 @@
 compares plain-text passwords) and JWT session tokens.
  
 Honest scope note: this file, plus the /auth routes built on it, is
-a genuinely working login/signup system. require_auth_for_user below
-is the real, reusable dependency for protecting a route, but most
-existing endpoints in this app still don't use it yet - they trust
-whatever user_id is passed in the URL, rather than verifying it
-against the caller's token. Retrofitting auth checks into every
-existing route is a separate, larger change; it's been started on
-Waypoint's journal endpoints specifically (explicitly marketed as
-private, the most directly contradictory gap), not silently implied
-to be done everywhere.
+a genuinely working login/signup system, and its checks are now
+applied across the app - not aspirational. Two enforced patterns:
+ 
+  - require_auth_for_user: the dependency for a route whose own URL
+    path carries {user_id}. Every such route uses it (or calls
+    verify_token_belongs_to_user directly), so the path user_id is
+    always checked against the caller's token - a token can only act
+    on its own user's data.
+  - verify_token_belongs_to_user(resource.user_id, ...): for a route
+    keyed on some OTHER resource's id (an application, outreach,
+    post, milestone, etc.), the resource is loaded first and this is
+    called with its real owning user_id, so one user can't touch
+    another user's resource by guessing its id (no IDOR).
+ 
+The deliberately public, no-token routes are limited to: /auth/signup,
+/auth/login, /auth/me (self-scoped - reads only the token's own user),
+POST /users (a password-less demo record that can never obtain a token,
+so it reaches no protected data), /schools/* (public reference data),
+and /engagement/accept/{token} (a cryptographically-random, single-use
+capability token IS the authorization). require_valid_token guards the
+one authenticated-but-not-owned case (listing leadership research).
+ 
+Keep this note accurate: it is read as the app's security posture. If
+a new route is added, wire the matching check above rather than
+trusting a URL user_id.
 """
 import os
 from app.services.timeutil import utcnow
