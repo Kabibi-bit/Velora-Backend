@@ -25,7 +25,7 @@ SCHOLARSHIP_SEARCH_QUERIES = ["scholarship", "fellowship", "grant"]
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy.orm import Session
-import anthropic
+from app.services.ai_client import get_client
  
 from app.db import SessionLocal
 from app.models.db_models import User, Profile, Listing, MatchScore, Notification
@@ -43,7 +43,18 @@ from app.services.timeutil import utcnow
 from app.services.embeddings import generate_embedding
  
 SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "1440"))  # default: once/day
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# The Anthropic client is resolved LAZILY at scan time via get_client(), never
+# constructed here at module scope. main.py does `from app.services.scheduler
+# import start_scheduler` at the very top of startup - so any exception raised
+# while importing THIS module aborts startup before the app can bind a port
+# (Render then reports "no open ports"). The Anthropic SDK RAISES at
+# construction when ANTHROPIC_API_KEY is missing, so an eager
+# `anthropic.Anthropic(...)` here was a latent startup crash on any environment
+# without the key set. get_client() never raises (returns None without a key),
+# and the scan/auto-apply paths already degrade gracefully on a None client -
+# exactly the same fix the route modules got. Resolving at call time (not here)
+# also avoids the import-order trap: this module is imported before main.py runs
+# load_dotenv(), so a module-scope resolve would cache the wrong (empty) result.
  
  
 def _profile_to_dict(p: Profile) -> dict:
@@ -148,6 +159,7 @@ async def _pull_and_store_new_listings(db: Session):
     queries actually run today, rather than blindly firing all 19
     regardless of what's already been consumed.
     """
+    anthropic_client = get_client()  # None if no API key; extract_tags degrades to []
     stored_count = 0
     total_possible_queries = len(JOB_SEARCH_QUERIES) + len(ATHLETIC_CAREER_QUERIES) + len(ADMISSIONS_OPPORTUNITY_QUERIES)
     reserved_calls = check_and_reserve_quota(db, "adzuna", calls_needed=total_possible_queries, daily_limit=ADZUNA_DAILY_CALL_LIMIT)
@@ -466,6 +478,7 @@ def run_scan_for_all_users():
     """
     from app.services.auto_apply import create_application_for_match, draft_outreach_for_match
  
+    anthropic_client = get_client()  # None if no API key; auto-apply/outreach are wrapped per-listing
     db = SessionLocal()
     try:
         print(f"[{utcnow().isoformat()}] Starting daily scan...")
@@ -592,6 +605,10 @@ def run_scan_for_all_users():
                         if auto_count > 0 or outreach_count > 0:
                             db.commit()
                     except Exception as e:
+                        # Roll back the failed notification write so it can't leave the
+                        # session dirty for the digest step / next user (the auto-apply
+                        # work above was already committed inside create_application_for_match).
+                        db.rollback()
                         print(f"    Notification write failed (non-fatal): {e}")
  
                 # Weekly digest: at most once per 7 days per user, only when there's
@@ -613,8 +630,18 @@ def run_scan_for_all_users():
                     if _digest_result.get("status") == "sent":
                         print(f"    Weekly digest sent to {user.email}")
                 except Exception as e:
+                    # Roll back a failed digest write so a dirty session can't break
+                    # the next user's iteration.
+                    db.rollback()
                     print(f"    Weekly digest skipped (non-fatal): {e}")
             except Exception as e:
+                # Roll back before moving to the next user. A failure mid-transaction
+                # (e.g. run_scan_for_user's MatchScore commit hitting its unique
+                # constraint) leaves the session in a FAILED state; without this
+                # rollback every remaining user's queries would then raise
+                # PendingRollbackError - one user's failure cascading to the whole
+                # batch, defeating the per-user isolation this block exists for.
+                db.rollback()
                 print(f"  Scan failed for {user.email}, continuing with remaining users: {e}")
         print("Daily scan complete.")
  
@@ -664,6 +691,10 @@ def run_scan_for_all_users():
                 db.commit()
                 print(f"Auto-send: {sent_count} approved application(s) past their undo window, now genuinely sent.")
         except Exception as e:
+            # Roll back the uncommitted status mutations so the session is clean
+            # (belt-and-suspenders: this is the last block, and the finally closes
+            # the session anyway, but keeps the pattern consistent).
+            db.rollback()
             print(f"Auto-send failed (non-fatal): {e}")
     except Exception as e:
         print(f"Scan failed: {e}")
