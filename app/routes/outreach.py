@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user, require_valid_token
 from app.services.tiers import require_feature
+from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import anthropic
@@ -124,6 +125,10 @@ def get_leadership_research(listing_id: str, db: Session = Depends(get_db), _aut
     if client is None:
         from fastapi import HTTPException as _HE
         raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
+    # Meter this paid AI + web-search call (was unmetered; require_valid_token only
+    # gated it to logged-in callers). Fails open; company/leadership research is the
+    # same cost class as company-research, so it shares that tier cap.
+    rate_limit_by_tier(db, _auth["sub"], "company-research", per_action_limit=200)
     """A standalone view of the company research itself, not tied to
     drafting an email - so a candidate can genuinely understand what
     a company's real leadership seems to be prioritizing before
