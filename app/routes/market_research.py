@@ -22,11 +22,15 @@ class CompanyResearchIn(BaseModel):
  
  
 @router.post("/research-company")
-def research_company_route(payload: CompanyResearchIn, _auth: dict = Depends(require_valid_token)):
+def research_company_route(payload: CompanyResearchIn, db: Session = Depends(get_db), _auth: dict = Depends(require_valid_token)):
     client = get_client()
     if client is None:
         from fastapi import HTTPException as _HE
         raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
+    # Meter this paid AI + web-search call (was unmetered; require_valid_token only
+    # gated it to logged-in callers - so any one token could run up the web-search
+    # bill). Fails open; keyed to the caller's own token subject.
+    rate_limit_by_tier(db, _auth["sub"], "company-research", per_action_limit=200)
     if not payload.company_name.strip():
         raise HTTPException(status_code=400, detail="company_name is required")
     if not payload.role_title.strip():
