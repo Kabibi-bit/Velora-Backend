@@ -51,7 +51,8 @@ def draft_outreach(payload: DraftIn, db: Session = Depends(get_db), authorizatio
     if result.get("error") == "no_contact_guess":
         raise HTTPException(status_code=400, detail="Could not guess a contact address for this company")
     if (result.get("error") or "").startswith("draft_generation_failed"):
-        raise HTTPException(status_code=502, detail=f"Could not generate a draft just now - try again. ({result['error']})")
+        _log.warning("Outreach draft failed - %s", result["error"])
+        raise HTTPException(status_code=502, detail="Could not generate a draft just now. Please try again.")
     return result
  
  
@@ -111,7 +112,8 @@ def draft_leadership_grounded_outreach_endpoint(payload: DraftLeadershipGrounded
     if result.get("error") == "no_contact_guess":
         raise HTTPException(status_code=400, detail="Could not guess a contact address for this company")
     if (result.get("error") or "").startswith("draft_generation_failed"):
-        raise HTTPException(status_code=502, detail=f"Could not generate a draft just now - try again. ({result['error']})")
+        _log.warning("Outreach draft failed - %s", result["error"])
+        raise HTTPException(status_code=502, detail="Could not generate a draft just now. Please try again.")
     return {
         **result,
         "priorities_summary": leadership_research.get("priorities_summary") or "",
