@@ -10,7 +10,7 @@ from app.services.ai_client import get_client
  
 from app.db import get_db
 from app.models.db_models import Outcome, Listing, SocialPost
-from app.services.timeutil import utcnow
+from app.services.timeutil import utcnow, to_naive_utc
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
@@ -336,11 +336,14 @@ def get_reminders(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
         outcome = latest_outcome.get(lid)
  
         if outcome and outcome[0] == "interview":
-            days = (now - outcome[1]).days
+            # to_naive_utc: updated_at is TIMESTAMPTZ (read back tz-aware); subtracting
+            # it from the naive `now` would raise on real Postgres without this.
+            days = (now - to_naive_utc(outcome[1])).days
             if days >= INTERVIEW_FOLLOWUP_DAYS:
                 interview_followups.append({"listing_id": lid, "title": title, "org": org, "days_since_interview": days})
         elif not outcome and a.status == "sent" and a.sent_at:
-            days = (now - a.sent_at).days
+            # to_naive_utc: sent_at is TIMESTAMPTZ (read back tz-aware); see above.
+            days = (now - to_naive_utc(a.sent_at)).days
             if days >= STALE_THRESHOLD_DAYS:
                 stale_applications.append({"listing_id": lid, "title": title, "org": org, "days_since_sent": days})
  
