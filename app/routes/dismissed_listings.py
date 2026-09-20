@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
  
 from app.db import get_db
 from app.models.db_models import DismissedListing
@@ -43,7 +44,13 @@ def dismiss_listing(payload: DismissIn, db: Session = Depends(get_db), authoriza
  
     dismissed = DismissedListing(user_id=payload.user_id, listing_id=payload.listing_id)
     db.add(dismissed)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent dismiss of the same (user, listing);
+        # mirror the "already dismissed" early return rather than 500.
+        db.rollback()
+        return {"status": "already dismissed"}
     return {"status": "dismissed"}
  
  
