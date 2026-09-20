@@ -1288,7 +1288,10 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
         }
  
     applications_text = "\n\n".join(
-        f"Application {i+1} - to \"{a['listing_title']}\" at {a['listing_org']} (tags: {', '.join(a.get('listing_tags', []))}). "
+        # `... or []` (not `.get(k, [])`): the key can be present-but-None
+        # (e.g. a listing row with a NULL tags column), and a bare default is
+        # only used for a MISSING key, so join() would otherwise crash on None.
+        f"Application {i+1} - to \"{a['listing_title']}\" at {a['listing_org']} (tags: {', '.join(a.get('listing_tags') or [])}). "
         f"Outcome: {a['outcome_status']}.\nWhat was actually sent:\n\"{a['draft_content'][:600]}\""
         for i, a in enumerate(usable)
     )
@@ -1348,24 +1351,28 @@ def generate_deep_personalization_insights(anthropic_client, applications: list[
     # insights, if any, pointed outside the real 1..N range actually
     # provided, so the caller can decide how to handle it rather than
     # silently trusting an out-of-range reference.
+    # Validate the insights shape BEFORE the flagging loop iterates it. This
+    # check was previously AFTER the loop and only checked that insights was a
+    # list - so a list holding a non-string item (e.g. [123, "..."]) slipped
+    # past it and crashed re.findall() with a raw TypeError mid-loop. Checking
+    # items too, and doing it first, turns that into a clean ValueError the
+    # route returns as a 502. The frontend mirror degrades to null on the same
+    # bad shape, so rejecting here keeps both paths equivalent (client falls
+    # back). insights is the one field the frontend directly iterates to render
+    # each finding, so a non-string item is never safe to pass through.
+    insights = parsed.get("insights")
+    if not isinstance(insights, list) or not all(isinstance(x, str) for x in insights):
+        raise ValueError(f"personalization insights response had an unexpected shape: {parsed}")
+ 
     valid_range = range(1, len(usable) + 1)
     flagged_insight_indices = []
-    for i, insight in enumerate(parsed.get("insights") or []):
+    for i, insight in enumerate(insights):
         refs = set(int(n) for n in re.findall(r"[Aa]pplications?\s*#?(\d+)", insight))
         for paren_group in re.findall(r"\(([^)]*\d[^)]*)\)", insight):
             refs.update(int(n) for n in re.findall(r"\d+", paren_group))
         if any(r not in valid_range for r in refs):
             flagged_insight_indices.append(i)
     parsed["flagged_insight_indices"] = flagged_insight_indices
- 
-    if not isinstance(parsed.get("insights"), list):
-        # Defense in depth for a shared function - the route already
-        # wraps this call in its own try/except, so a malformed shape
-        # isn't a live crash risk today, but this function shouldn't
-        # rely solely on every current and future caller remembering
-        # that. insights specifically, since that's the one field the
-        # frontend directly iterates over to render each finding.
-        raise ValueError(f"personalization insights response had an unexpected shape: {parsed}")
  
     return parsed
  
