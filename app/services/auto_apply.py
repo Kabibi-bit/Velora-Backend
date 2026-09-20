@@ -19,6 +19,7 @@ review per site) intentionally left out of this version.
 import os
 from app.services.timeutil import utcnow
 from datetime import datetime, timedelta
+from sqlalchemy.exc import IntegrityError
  
 DEFAULT_CONFIDENCE_THRESHOLD = int(os.getenv("AUTO_APPLY_THRESHOLD", "80"))
 UNDO_WINDOW_MINUTES = int(os.getenv("UNDO_WINDOW_MINUTES", "30"))
@@ -311,7 +312,23 @@ def create_application_for_match(db, anthropic_client, user_id: str, listing_id:
         draft_flagged_terms=draft_result["flagged_terms"],
     )
     db.add(app_record)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent apply for the same (user, listing): the
+        # uq_applications_user_listing constraint rejected the duplicate. Return the
+        # row that won, matching the check-then-insert "already_existed" result above
+        # - so a double-click / scan-vs-manual race can't create two applications
+        # (a duplicate AI draft + polluted calibration) instead of a 500.
+        db.rollback()
+        existing = (
+            db.query(Application)
+            .filter(Application.user_id == user_id, Application.listing_id == listing_id)
+            .first()
+        )
+        if existing:
+            return {"application_id": str(existing.id), "status": existing.status, "draft": existing.draft_content, "already_existed": True}
+        raise
     db.refresh(app_record)
  
     return {
