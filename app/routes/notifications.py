@@ -12,7 +12,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
  
 class NotificationIn(BaseModel):
     user_id: str
-    type: str
+    type: str = Field(max_length=50)  # short internal constant ("scan", "auto_apply", ...); bounded defensively
     title: str = Field(max_length=500)
     detail: str | None = Field(default=None, max_length=2000)
  
