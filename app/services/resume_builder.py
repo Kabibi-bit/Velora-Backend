@@ -126,36 +126,50 @@ def _find_fabricated_numbers(original: str, polished: str) -> list[str]:
     slipped through entirely undetected under bare-digit matching,
     since 2.5 and 20 genuinely appear in the original text, just with
     a completely different, fabricated meaning attached. For any
-    number that carries a $ or % unit marker in the polished text,
-    this additionally requires that same number to carry that same
-    marker somewhere in the original, not just appear as bare digits
-    - a number honestly reused with the same unit (e.g. "$50
-    thousand" staying "$50 thousand") is correctly left alone.
-    """
-    original_numbers = set(re.findall(r"\d+\.?\d*", original))
-    polished_matches = list(re.finditer(r"\d+\.?\d*", polished))
+    number that carries a $ or % unit in the polished text, this
+    additionally requires that same number to carry that same unit
+    somewhere in the original - a number honestly reused with the
+    same unit (e.g. "$50 thousand" staying "$50 thousand") is
+    correctly left alone.
  
-    def _unit_context(text: str, number_str: str, start_idx: int) -> tuple[bool, bool]:
+    The unit test recognizes both symbol and word forms ($ / "dollars"
+    / "USD"; % / "percent" / "percentage" / "pct"), because a
+    fabricated "20 percent" written as a word is exactly as dishonest
+    as "20%" and was previously slipping through the symbol-only check.
+    Word-and-symbol are treated as the same unit, so an honest "$5"
+    becoming "5 dollars" is not flagged. Numbers are also matched with
+    their thousands separators ("1,000") and compared with commas
+    stripped, so an honest number merely reformatted ("1,000" -> "1000")
+    is no longer flagged as fabricated.
+    """
+    NUM = r"\d[\d,]*(?:\.\d+)?"
+    def _norm(s: str) -> str:
+        return s.replace(",", "")
+    original_numbers = {_norm(n) for n in re.findall(NUM, original)}
+ 
+    def _unit_context(text: str, start_idx: int, end_idx: int) -> tuple[bool, bool]:
         before = text[max(0, start_idx - 1):start_idx]
-        after_idx = start_idx + len(number_str)
-        after = text[after_idx:after_idx + 1]
-        return before == "$", after == "%"
+        after = text[end_idx:end_idx + 12].lower()
+        is_dollar = (before == "$") or bool(re.match(r"\s*(dollars?|usd)\b", after))
+        is_percent = bool(re.match(r"\s*%", after)) or bool(re.match(r"\s*(percent|percentage|pct)\b", after))
+        return is_dollar, is_percent
  
     flagged = set()
-    for m in polished_matches:
-        num = m.group()
+    for m in re.finditer(NUM, polished):
+        raw = m.group()
+        num = _norm(raw)
         if num not in original_numbers:
-            flagged.add(num)
+            flagged.add(raw)
             continue
-        p_dollar, p_percent = _unit_context(polished, num, m.start())
+        p_dollar, p_percent = _unit_context(polished, m.start(), m.end())
         if not p_dollar and not p_percent:
-            continue  # no specific unit marker to verify; bare-number matching is enough
+            continue  # no specific unit to verify; bare-number matching is enough
         matching_context_found = any(
-            _unit_context(original, num, om.start()) == (p_dollar, p_percent)
-            for om in re.finditer(re.escape(num), original)
+            _norm(om.group()) == num and _unit_context(original, om.start(), om.end()) == (p_dollar, p_percent)
+            for om in re.finditer(NUM, original)
         )
         if not matching_context_found:
-            flagged.add(num)
+            flagged.add(raw)
     return sorted(flagged)
  
  
