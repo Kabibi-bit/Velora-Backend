@@ -475,6 +475,9 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     db.commit()
  
     if status == "failed":
-        raise HTTPException(status_code=502, detail=f"Send failed: {error_detail}")
+        # error_detail is the raw send-provider exception (str(e)); log it
+        # server-side and return a generic message rather than leaking it.
+        _log.warning("Outreach email send failed - %s", error_detail)
+        raise HTTPException(status_code=502, detail="Sending the email failed just now. Please try again.")
     return {"status": "sent", "to_address": payload.to_address}
  
