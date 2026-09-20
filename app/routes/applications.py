@@ -17,7 +17,7 @@ from app.services.auto_apply import (
     compute_sendable_at,
     create_application_for_match,
 )
-from app.services.timeutil import utcnow
+from app.services.timeutil import utcnow, to_naive_utc
  
 _log = logging.getLogger("velora")
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -254,8 +254,13 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
     verify_token_belongs_to_user(str(app_record.user_id), authorization)
     if app_record.status != "approved":
         raise HTTPException(status_code=400, detail="Application is not approved yet")
-    if app_record.sendable_at and utcnow() < app_record.sendable_at:
-        remaining = (app_record.sendable_at - utcnow()).seconds // 60
+    # Coerce the DB value to naive UTC: sendable_at is TIMESTAMPTZ, so psycopg2
+    # reads it back tz-aware, and comparing/subtracting it against the naive
+    # utcnow() would raise "can't compare offset-naive and offset-aware datetimes"
+    # on real Postgres (it just happens to work if the dev DB returns naive).
+    _sendable_at = to_naive_utc(app_record.sendable_at)
+    if _sendable_at and utcnow() < _sendable_at:
+        remaining = (_sendable_at - utcnow()).seconds // 60
         raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
  
     app_record.status = "sent"
