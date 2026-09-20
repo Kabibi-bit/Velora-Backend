@@ -122,7 +122,11 @@ def create_draft(payload: DraftIn, db: Session = Depends(get_db), authorization:
     # unlike create_application_for_match, which correctly guards
     # against the identical shape from the same function.
     if "error" in draft_result:
-        raise HTTPException(status_code=502, detail=f"Could not generate a draft just now - try again. ({draft_result['error']})")
+        # The service encodes the raw exception in draft_result["error"] (e.g.
+        # "draft_generation_failed: <exception>"); log that server-side but return
+        # a generic message so the internal detail never reaches the client.
+        _log.warning("Application draft failed - %s", draft_result["error"])
+        raise HTTPException(status_code=502, detail="Could not generate a draft just now. Please try again.")
     draft_text = draft_result["text"]
     status = decide_auto_send(payload.confidence_pct)
  
