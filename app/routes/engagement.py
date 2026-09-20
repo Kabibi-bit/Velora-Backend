@@ -72,7 +72,11 @@ def draft_suggestion(payload: DraftIn, db: Session = Depends(get_db), authorizat
     try:
         result = draft_engagement_suggestion(client, profile_dict, payload.post_content.strip(), payload.poster_context)
     except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        # Log the real reason server-side; return a generic message so the raw
+        # exception (which can include the full model response / internals) never
+        # reaches the client. Mirrors the global handler's no-leak contract.
+        _log.warning("Could not draft an engagement suggestion just now - %s", e)
+        raise HTTPException(status_code=502, detail="Could not draft a suggestion just now. Please try again.")
  
     suggestion = EngagementSuggestion(
         user_id=payload.user_id,
