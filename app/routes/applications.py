@@ -169,6 +169,28 @@ def list_applications(user_id: str, db: Session = Depends(get_db), _auth: dict =
         .order_by(Application.created_at.desc())
         .all()
     )
+ 
+    # Join the real logged outcomes so each application carries its
+    # outcome_status. Without this, the frontend - which reads
+    # a.outcome_status in ~25 places (outcome badges, calibration, the
+    # rejection/ghost autopsy, "any positive" checks) - saw undefined for
+    # every logged-in application, because overview/workshop overwrite local
+    # state with this response (saveApplications(bApps)). A user who logged an
+    # outcome would lose it from the UI on their next visit even though the
+    # backend had it the whole time. Keep the most recent outcome per listing.
+    from app.models.db_models import Outcome
+    outcome_rows = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == user_id)
+        .order_by(Outcome.updated_at.asc())
+        .all()
+    )
+    outcome_status_by_listing = {}
+    outcome_time_by_listing = {}
+    for o in outcome_rows:  # ascending order -> last write per listing wins (most recent)
+        outcome_status_by_listing[str(o.listing_id)] = o.status
+        outcome_time_by_listing[str(o.listing_id)] = o.updated_at
+ 
     return [
         {
             "id": str(a.id),
@@ -182,6 +204,8 @@ def list_applications(user_id: str, db: Session = Depends(get_db), _auth: dict =
             "sent_at": a.sent_at.isoformat() if a.sent_at else None,
             "auto_generated": a.auto_generated,
             "created_at": a.created_at.isoformat(),
+            "outcome_status": outcome_status_by_listing.get(str(a.listing_id)),
+            "outcome_logged_at": outcome_time_by_listing[str(a.listing_id)].isoformat() if outcome_time_by_listing.get(str(a.listing_id)) else None,
         }
         for a, l in rows
     ]
