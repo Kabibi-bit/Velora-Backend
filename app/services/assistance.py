@@ -26,7 +26,15 @@ def find_assistance_options(anthropic_client, need_description: str, budget: str
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}],
     )
-    findings = "".join(b.text for b in resp.content if b.type == "text").strip()
+    # getattr (not b.type directly), matching the sources loop below: a content
+    # block without a .type attribute would otherwise crash this extraction with
+    # an AttributeError while the sources loop stayed safe - an inconsistency,
+    # and needless fragility for a shared helper.
+    findings = "".join(
+        (getattr(b, "text", "") or "")
+        for b in resp.content
+        if getattr(b, "type", None) == "text"
+    ).strip()
  
     sources = []
     for block in resp.content:
