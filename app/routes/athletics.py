@@ -573,7 +573,13 @@ def detect_highlights(payload: DetectHighlightsIn, db: Session = Depends(get_db)
     real timestamp; nothing is invented.
     """
     if payload.user_id:
-        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=100)
+        # Meter under the dedicated "highlight-detection" key, not "athlete-content".
+        # FEATURE_DAILY_CAPS caps highlight-detection deliberately low (free 2, pro 15,
+        # max 100) because the Roboflow CV inference is genuinely expensive; billing it
+        # to the athlete-content bucket (free 8, pro 60) ran it at ~4x the intended free
+        # limit AND made the two features drain each other's quota. Its own low cap was
+        # otherwise never applied.
+        rate_limit_by_tier(db, payload.user_id, "highlight-detection", per_action_limit=100)
     if not payload.video_url.strip():
         raise HTTPException(status_code=400, detail="video_url is required")
     try:
