@@ -11,6 +11,7 @@ from app.services.ai_client import get_client
 from app.db import get_db
 from app.models.db_models import SocialPost
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
+from app.services.rate_limit import rate_limit_by_tier
 from app.services.social import reflect_on_journal_entry, reflect_on_entry_pattern
 from app.services.timeutil import utcnow
  
@@ -151,6 +152,11 @@ def reflect_on_post(post_id: str, payload: ReflectIn, db: Session = Depends(get_
     if not post:
         raise HTTPException(status_code=404, detail="Journal entry not found")
     verify_token_belongs_to_user(str(post.user_id), authorization)
+    # Meter this paid AI reflection (was unmetered - a per-user cost vector once
+    # the frontend routes here). Fails open; journal reflection has no tier-cap
+    # key, so an absolute per-user daily ceiling is the anti-abuse limit and the
+    # tier-wide AI budget backstop still applies on top.
+    rate_limit_by_tier(db, str(post.user_id), "journal-reflect", per_action_limit=100)
     try:
         reflection = reflect_on_journal_entry(client, payload.focus, payload.context_summary, post.body, post.tag_label)
     except Exception as e:
@@ -180,6 +186,9 @@ def reflect_pattern(user_id: str, payload: ReflectPatternIn, db: Session = Depen
         uuid_module.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id is not a valid UUID")
+    # Meter this paid AI pattern reflection (was unmetered). Fails open; heavier
+    # than a single-entry reflection, so a lower per-user daily ceiling.
+    rate_limit_by_tier(db, user_id, "journal-reflect", per_action_limit=60)
     rows = (
         db.query(SocialPost)
         .filter(SocialPost.user_id == user_id)
