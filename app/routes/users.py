@@ -19,6 +19,14 @@ VALID_ROLES = {"candidate"}
 # flow from verified subscription webhooks and this setter should be removed.
 _SELF_SERVE_TIER_ENABLED = os.getenv("ALLOW_SELF_SERVE_TIER", "true").strip().lower() in ("1", "true", "yes")
  
+# POST /users creates a bare, password-less demo record with no authentication
+# (see the note on create_user). It's genuinely useful for local/demo testing,
+# but left open in production it's an unauthenticated, unbounded row-creation
+# (spam/abuse) endpoint. Gated the same way as self-serve tiers: enabled by
+# default so testing is unchanged, but set ALLOW_PUBLIC_USER_CREATE=false in the
+# production environment - real accounts go through /auth/signup regardless.
+_PUBLIC_USER_CREATE_ENABLED = os.getenv("ALLOW_PUBLIC_USER_CREATE", "true").strip().lower() in ("1", "true", "yes")
+ 
  
 class UserIn(BaseModel):
     email: EmailStr
@@ -31,7 +39,10 @@ def create_user(payload: UserIn, db: Session = Depends(get_db)):
     # password-less user record used for demo/testing only; real
     # account creation goes through /auth/signup (which hashes a
     # password and issues a token). Kept public because there is no
-    # token to check before an account exists.
+    # token to check before an account exists - and gated by env so it
+    # can be turned off entirely in production (see the flag above).
+    if not _PUBLIC_USER_CREATE_ENABLED:
+        raise HTTPException(status_code=403, detail="Public user creation is disabled - sign up via /auth/signup.")
     if payload.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of {VALID_ROLES}")
  
