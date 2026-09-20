@@ -393,7 +393,11 @@ def get_search_strain(user_id: str, db: Session = Depends(get_db), _auth: dict =
     if positive_exists:
         return {"strain": None}
  
-    oldest = min(a.sent_at for a in sent)
+    # to_naive_utc: sent_at is TIMESTAMPTZ (read back tz-aware), so subtracting the
+    # min of them from the naive `now` would raise on real Postgres. This endpoint
+    # fires precisely for a long-searching user with no positive outcome - exactly
+    # the case that hits this line - so the coercion matters.
+    oldest = to_naive_utc(min(a.sent_at for a in sent))
     span_days = (now - oldest).days
     if span_days < SEARCH_STRAIN_MIN_DAYS:
         return {"strain": None}
