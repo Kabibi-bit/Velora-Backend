@@ -108,7 +108,7 @@ async def fetch_adzuna(query: str, location: str = "us", page: int = 1) -> list[
         return []
  
  
-def normalize_adzuna(raw: dict) -> dict:
+def normalize_adzuna(raw: dict) -> dict | None:
     """HTML-entity decoding on title/org/description - found by
     stress-testing against realistic messy data rather than clean
     constructed listings: real aggregated postings routinely contain
@@ -116,6 +116,12 @@ def normalize_adzuna(raw: dict) -> dict:
     name - AT&T, Procter & Gamble - would otherwise display as
     "AT&amp;T" verbatim to a real user).
     """
+    # An external API can return a non-dict element in its results array (a null,
+    # a stray string). This runs in a list comprehension over that array during
+    # the scan, so a raw.get() AttributeError here would lose the WHOLE source's
+    # batch for that scan. Skip the bad record instead (dedupe_listings drops None).
+    if not isinstance(raw, dict):
+        return None
     raw_id = raw.get("id")
     if raw_id is not None:
         external_id = str(raw_id)
@@ -199,11 +205,13 @@ async def fetch_athletic_career_jobs(location: str = "us", max_queries: int | No
     return all_results
  
  
-def normalize_athletic_job(raw: dict) -> dict:
+def normalize_athletic_job(raw: dict) -> dict | None:
     """Same shape as normalize_adzuna, but tagged as 'athletic' so it
     surfaces correctly in the Athlete dashboard and its matching engine.
     """
     normalized = normalize_adzuna(raw)
+    if normalized is None:  # non-dict record skipped upstream
+        return None
     normalized["type"] = "athletic"
     return normalized
  
@@ -241,12 +249,14 @@ async def fetch_admissions_opportunities(location: str = "us", max_queries: int 
     return all_results
  
  
-def normalize_admissions_opportunity(raw: dict) -> dict:
+def normalize_admissions_opportunity(raw: dict) -> dict | None:
     """Same shape as normalize_adzuna, but tagged as 'admissions' so it
     surfaces correctly in the Admissions dashboard and its matching
     engine, mirroring normalize_athletic_job.
     """
     normalized = normalize_adzuna(raw)
+    if normalized is None:  # non-dict record skipped upstream
+        return None
     normalized["type"] = "admissions"
     return normalized
  
@@ -255,6 +265,11 @@ def dedupe_listings(listings: list[dict]) -> list[dict]:
     seen = set()
     out = []
     for l in listings:
+        # Skip None / non-dict entries: the normalizers now return None for a
+        # malformed external record, and this is the shared funnel every source's
+        # normalized list flows through, so guarding here also defends any caller.
+        if not isinstance(l, dict):
+            continue
         key = (l.get("source"), l.get("external_id"))
         if key not in seen:
             seen.add(key)
@@ -486,6 +501,8 @@ def _scholarship_passes_quality_check(raw: dict) -> tuple[bool, str]:
     principle already applied to candidate match scores elsewhere in
     this app (see matching.py's PRESENTABLE_MIN_SCORE).
     """
+    if not isinstance(raw, dict):
+        return False, "malformed record (not an object)"
     confidence = str(raw.get("confidence") or "").lower()
     if confidence == "low":
         return False, "self-reported low confidence"
