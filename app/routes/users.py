@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from app.services.auth import require_auth_for_user
 from pydantic import BaseModel, EmailStr
@@ -9,6 +10,14 @@ from app.models.db_models import User
 router = APIRouter(prefix="/users", tags=["users"])
  
 VALID_ROLES = {"candidate"}
+ 
+# Self-serve tier switching exists ONLY so tiers are testable before billing is
+# wired. Left open in production it is a genuine "upgrade yourself to Max for free"
+# hole, so it is gated: enabled by default (local/demo testing and the in-app tier
+# switcher keep working unchanged), but set ALLOW_SELF_SERVE_TIER=false in the
+# production environment to lock it. When real billing lands, tier changes should
+# flow from verified subscription webhooks and this setter should be removed.
+_SELF_SERVE_TIER_ENABLED = os.getenv("ALLOW_SELF_SERVE_TIER", "true").strip().lower() in ("1", "true", "yes")
  
  
 class UserIn(BaseModel):
@@ -94,9 +103,11 @@ def get_tier(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(
  
 @router.post("/{user_id}/tier")
 def set_tier(user_id: str, payload: _SetTierIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
-    """Set the user's tier. NO PAYMENT YET - this exists so tiers are testable.
-    When billing is added, tier changes should flow from verified subscription
-    events (a webhook), and this open setter should be removed or locked down."""
+    """Set the user's tier. Gated by ALLOW_SELF_SERVE_TIER (default on for testing;
+    turn OFF in production). When billing is added, tier changes should flow from
+    verified subscription events (a webhook), not this open setter."""
+    if not _SELF_SERVE_TIER_ENABLED:
+        raise HTTPException(status_code=403, detail="Tier changes are managed through billing.")
     from sqlalchemy import text
     t = normalize_tier(payload.tier)
     db.execute(text("UPDATE users SET tier = :t WHERE id = :uid"), {"t": t, "uid": str(user_id)})
