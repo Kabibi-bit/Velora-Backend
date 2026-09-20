@@ -170,6 +170,11 @@ async def trigger_scan(user_id: str, db: Session = Depends(get_db), _auth: dict 
     except ValueError:
         raise HTTPException(status_code=404, detail="No current profile for this user")
  
+    # Meter the manual scan: the most expensive action (Adzuna pulls + AI drafting).
+    # Fails open. The current frontend doesn't call this route (watch mode re-scores
+    # via GET matches), so this purely caps direct/abusive hammering of it.
+    rate_limit_by_tier(db, user_id, "listing-scan", per_action_limit=50)
+ 
     new_count = await _pull_and_store_new_listings(db)
     result = run_scan_for_user(db, user_id)
     result["new_listings_pulled"] = new_count
