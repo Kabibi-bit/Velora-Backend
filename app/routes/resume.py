@@ -540,6 +540,9 @@ def generate_cover_letter_for_listing(user_id: str, listing_id: str, db: Session
     if client is None:
         from fastapi import HTTPException as _HE
         raise _HE(status_code=503, detail="AI service is not configured. Please try again later.")
+    # Meter this paid AI generation (was unmetered). Fails open; a cover letter is
+    # the same cost class as an application draft, so it shares that tier cap.
+    rate_limit_by_tier(db, user_id, "application-draft", per_action_limit=200)
     """A real cover letter for one specific listing, grounded only in
     the person's own real entries and stated goal - the concrete
     answer to a documented, verified competitor failure where their
