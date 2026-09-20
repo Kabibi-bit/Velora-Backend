@@ -370,6 +370,16 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         import json
         parsed = json.loads(text)
+        # Match the frontend's strict shape check (fetchConnectionStrategy, which
+        # throws on any non-string key). Previously `.get(k, "")` below silently
+        # turned a MISSING key into an empty string, so a logged-in user could get
+        # a blank outreach_message that then flowed straight into a drafted outreach
+        # email - while an offline user (the FE direct path) correctly got a "try
+        # again". Rejecting an incomplete/empty shape here makes both paths behave
+        # identically (this raise is caught just below and returned as a 502).
+        if not all(isinstance(parsed.get(k), str) and parsed.get(k).strip()
+                   for k in ("contact_type", "search_guidance", "outreach_message")):
+            raise ValueError("connection strategy response has an unexpected or empty shape")
     except Exception as e:
         _log.warning("Could not generate a connection strategy just now - %s", e)
         raise HTTPException(status_code=502, detail="Could not generate a connection strategy just now. Please try again.")
@@ -378,9 +388,9 @@ def get_connection_strategy(user_id: str, listing_id: str, db: Session = Depends
         "listing_id": listing_id,
         "listing_title": listing.title,
         "listing_org": listing.org,
-        "contact_type": parsed.get("contact_type", ""),
-        "search_guidance": parsed.get("search_guidance", ""),
-        "outreach_message": parsed.get("outreach_message", ""),
+        "contact_type": parsed["contact_type"],
+        "search_guidance": parsed["search_guidance"],
+        "outreach_message": parsed["outreach_message"],
     }
  
  
