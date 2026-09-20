@@ -4,6 +4,7 @@ from app.services.auth import require_auth_for_user, verify_token_belongs_to_use
 from app.services.rate_limit import rate_limit_by_tier
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 import anthropic
 from app.services.ai_client import get_client
  
@@ -54,7 +55,14 @@ def save_listing(payload: SaveIn, db: Session = Depends(get_db), authorization: 
  
     saved = SavedListing(user_id=payload.user_id, listing_id=payload.listing_id)
     db.add(saved)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent save of the same (user, listing): the winner
+        # already saved (and will draft). Mirror the "already saved" early return
+        # rather than 500 or double-drafting.
+        db.rollback()
+        return {"status": "already saved"}
  
     draft_result = None
     try:
