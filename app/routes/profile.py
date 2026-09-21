@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, field_validator, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from sqlalchemy.exc import IntegrityError
  
 from app.db import get_db
 from app.models.db_models import Profile
@@ -122,11 +123,10 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
     # This endpoint takes user_id from the body, so verify the token
     # against it directly (the path-based dependency doesn't apply).
     verify_token_belongs_to_user(payload.user_id, authorization)
-    db.query(Profile).filter(
-        Profile.user_id == payload.user_id, Profile.is_current == True  # noqa: E712
-    ).update({"is_current": False})
  
-    new_profile = Profile(
+    # Build the new snapshot's fields once; a fresh Profile is constructed per
+    # attempt below (a rolled-back instance must not be re-added).
+    profile_fields = dict(
         user_id=payload.user_id,
         northstar=payload.northstar,
         final_idea=payload.final_idea,
@@ -152,11 +152,43 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
         target_schools=payload.target_schools,
         interests=payload.interests,
         student_achievements=payload.student_achievements,
-        is_current=True,
     )
-    db.add(new_profile)
-    db.commit()
-    db.refresh(new_profile)
+ 
+    # Demote the old current snapshot and insert the new one as current. The whole
+    # app assumes AT MOST ONE current profile per user - roughly thirty
+    # `is_current == True` reads across the routes/services call `.first()` and
+    # trust it's unambiguous. A concurrent double-save (double-click, two tabs, a
+    # client retry) could previously leave TWO current rows: both requests demoted
+    # the old current, then both inserted a new one, and every downstream `.first()`
+    # would then pick an arbitrary one. The real fix is the DB-level guarantee -
+    # the partial unique index `uq_profiles_one_current ON profiles(user_id) WHERE
+    # is_current` (db/schema_additions_profile_one_current.sql). With it, a losing
+    # concurrent insert raises IntegrityError instead of creating a second current
+    # row; we roll back and retry, and the retry's demote now sees the winner's row
+    # and clears it, so the latest save converges to the sole current row
+    # (last-write-wins - the same semantics a sequential save already had). Bounded
+    # so a genuinely pathological race can't spin; it degrades to 409, never a 500.
+    new_profile = None
+    for _ in range(3):
+        try:
+            db.query(Profile).filter(
+                Profile.user_id == payload.user_id, Profile.is_current == True  # noqa: E712
+            ).update({"is_current": False})
+            new_profile = Profile(**profile_fields, is_current=True)
+            db.add(new_profile)
+            db.commit()
+            db.refresh(new_profile)
+            break
+        except IntegrityError:
+            # Lost the race for the single current slot. Roll back and retry; the
+            # next demote will clear the concurrent winner's current row.
+            db.rollback()
+            new_profile = None
+    if new_profile is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Your profile was just updated from another session. Please refresh and try again.",
+        )
  
     response = {"status": "created", "profile_id": str(new_profile.id)}
     # A real, honest safeguard - not a silent override. Forcing
