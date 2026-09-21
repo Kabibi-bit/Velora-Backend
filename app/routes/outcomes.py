@@ -124,7 +124,11 @@ def get_calibration(user_id: str, db: Session = Depends(get_db), _auth: dict = D
     except ValueError:
         return {"calibration": {}, "total_applications_with_logged_outcomes": 0, "note": None}
  
-    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    # order_by updated_at ASC: the "latest outcome per listing" dedup below is
+    # last-write-wins, so unordered rows could label a listing with a stale
+    # earlier status (applied instead of a later offer), skewing calibration /
+    # personalization. Same ordering the reminders route already uses.
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).order_by(Outcome.updated_at.asc()).all()
     applications = db.query(Application).filter(Application.user_id == user_id).all()
  
     outcome_dicts = [{"listing_id": str(o.listing_id), "status": o.status} for o in outcomes]
@@ -159,7 +163,11 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db), _auth
     except ValueError:
         return {"verdict": "insufficient_data", "sample_size": 0, "note": "No current profile for this user"}
  
-    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    # order_by updated_at ASC: the "latest outcome per listing" dedup below is
+    # last-write-wins, so unordered rows could label a listing with a stale
+    # earlier status (applied instead of a later offer), skewing calibration /
+    # personalization. Same ordering the reminders route already uses.
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).order_by(Outcome.updated_at.asc()).all()
     outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
  
     applications = (
@@ -212,7 +220,11 @@ def get_personalization_insights(user_id: str, db: Session = Depends(get_db), _a
     except ValueError:
         return {"insights": [], "sample_size": 0, "note": "No current profile for this user"}
  
-    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    # order_by updated_at ASC: the "latest outcome per listing" dedup below is
+    # last-write-wins, so unordered rows could label a listing with a stale
+    # earlier status (applied instead of a later offer), skewing calibration /
+    # personalization. Same ordering the reminders route already uses.
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).order_by(Outcome.updated_at.asc()).all()
     outcome_by_listing = {str(o.listing_id): o.status for o in outcomes}
  
     applications = (
@@ -267,7 +279,11 @@ def get_factor_interactions(user_id: str, db: Session = Depends(get_db), _auth: 
     except ValueError:
         return {"findings": [], "sample_size": 0, "readiness": []}
  
-    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+    # order_by updated_at ASC: the "latest outcome per listing" dedup below is
+    # last-write-wins, so unordered rows could label a listing with a stale
+    # earlier status (applied instead of a later offer), skewing calibration /
+    # personalization. Same ordering the reminders route already uses.
+    outcomes = db.query(Outcome).filter(Outcome.user_id == user_id).order_by(Outcome.updated_at.asc()).all()
     outcome_by_listing_status = {str(o.listing_id): o.status for o in outcomes}
  
     applications = (
