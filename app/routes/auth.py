@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
  
 from app.db import get_db
 from app.models.db_models import User
-from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token
+from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token, dummy_password_hash
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
@@ -57,7 +57,12 @@ class LoginIn(BaseModel):
 @router.post("/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    # Always run a real bcrypt verify - against the user's hash, or a dummy hash
+    # of equal cost when the email is unknown - so response time doesn't reveal
+    # whether an account exists (email-enumeration timing side-channel). The
+    # dummy path always yields False; the generic error below covers both cases.
+    password_ok = verify_password(payload.password, user.password_hash if user else dummy_password_hash())
+    if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Incorrect email or password")
  
     token = create_access_token(str(user.id), user.role)
