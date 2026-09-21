@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
  
 from app.db import get_db
 from app.models.db_models import User
@@ -53,7 +54,17 @@ def signup(payload: SignupIn, db: Session = Depends(get_db)):
  
     user = User(email=payload.email, password_hash=hash_password(payload.password), role=payload.role)
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent signup for the same email - most commonly a
+        # double-click, but also two genuine parallel requests: both passed the
+        # `existing` check above before either committed, and the users.email UNIQUE
+        # constraint then rejected the duplicate. Return the same 409 as the check
+        # above rather than a raw 500. Mirrors the IntegrityError fallback the
+        # applications / saved / dismissed insert paths already use.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists - try logging in instead")
     db.refresh(user)
  
     token = create_access_token(str(user.id), user.role)
