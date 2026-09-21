@@ -273,10 +273,23 @@ def send_all_pending(user_id: str, db: Session = Depends(get_db), _auth: dict = 
         try:
             send_email(outreach.to_address, outreach.subject, outreach.body)
             outreach.status = "sent"
+            # Commit per-send, mirroring the single /send route. send_email fires an
+            # irreversible REAL email, so its "sent" status must be durable BEFORE the
+            # next iteration. The old single commit AFTER the whole loop meant any
+            # failure mid-loop (or between the loop and the commit) left already-sent
+            # emails still "drafted" - so a retry re-sent every one of them, emailing
+            # real people twice. Committing each send closes that window to at most the
+            # one in-flight item.
+            db.commit()
             results.append({"id": str(outreach.id), "status": "sent"})
         except Exception as e:
+            # send_email is a pure network call and never touches the DB session, so
+            # (like the single /send route) no rollback is needed before recording the
+            # failure. Log the real error internally; never return str(e) to the client
+            # - it can carry provider/internal detail (matches /send's hygiene).
             outreach.status = "failed"
-            results.append({"id": str(outreach.id), "status": "failed", "error": str(e)})
-    db.commit()
+            db.commit()
+            _log.warning("Bulk send failed for outreach %s - %s", outreach.id, e)
+            results.append({"id": str(outreach.id), "status": "failed"})
     return {"results": results, "total": len(results)}
  
