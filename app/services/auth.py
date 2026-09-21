@@ -84,6 +84,27 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
  
  
+_DUMMY_PASSWORD_HASH = None
+ 
+ 
+def dummy_password_hash() -> str:
+    """A real, valid bcrypt hash to verify a submitted password against when NO
+    user matches the login email, so an attempt for a nonexistent address costs
+    the same ~time as a wrong password for a real one.
+ 
+    Without this, login() short-circuits (`not user or not verify_password(...)`)
+    before ever calling bcrypt for an unknown email, so that path returns
+    measurably faster than the wrong-password path (~250ms of bcrypt) - a real
+    timing side-channel that lets an attacker enumerate which emails have
+    accounts, quietly defeating the deliberately-generic "Incorrect email or
+    password" message. Computed once, lazily, so module import stays cheap and
+    doesn't depend on bcrypt at import time."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = hash_password("velora-constant-time-dummy-credential")
+    return _DUMMY_PASSWORD_HASH
+ 
+ 
 def create_access_token(user_id: str, role: str) -> str:
     if not JWT_SECRET:
         raise RuntimeError(
