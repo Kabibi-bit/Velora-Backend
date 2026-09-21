@@ -301,6 +301,56 @@ def verify_captcha(token: str, remote_ip: str = "") -> bool:
         return False
  
  
+def clear_login_failures(db: Session, email: str) -> None:
+    """Reset the failed-login counter for an email on a SUCCESSFUL login, so a
+    real user who mistyped a few times (and got CAPTCHA-gated) isn't challenged
+    again on their very next attempt this hour. Safe: this runs only AFTER a
+    correct password, so only the genuine account owner can trigger it - an
+    attacker who can't authenticate can never reset their own budget. Clears only
+    the per-EMAIL counter; the per-IP counter is left intact so a spray source
+    still accumulates toward its own ceiling. Fails open - a cleanup error must
+    never turn an otherwise-successful login into a 500."""
+    email_key, _ = _login_keys(email, "")
+    try:
+        db.execute(
+            text("DELETE FROM user_rate_limits WHERE user_id = :k AND action = :a AND date = :d"),
+            {"k": email_key, "a": _LOGIN_FAIL_ACTION, "d": _login_bucket()},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+ 
+ 
+def real_client_ip(x_forwarded_for: str, direct_peer: str) -> str:
+    """Resolve the real client IP for throttling, resistant to X-Forwarded-For
+    spoofing.
+ 
+    A client can PREPEND arbitrary entries to X-Forwarded-For, but each trusted
+    proxy in front of the app APPENDS the address it actually received the request
+    from. So the genuine client is counted from the RIGHT, not the left: taking
+    the leftmost entry (parts[0]) lets an attacker send a random X-Forwarded-For
+    on every request, land in a new per-IP bucket each time, and evade the per-IP
+    throttle completely (the per-email limit still catches a targeted attack, but
+    the spray defense would be gone).
+ 
+    TRUSTED_PROXY_HOPS (default 1, e.g. Render's load balancer) is how many
+    trailing entries were added by infrastructure you control; the entry just
+    inside them is the real client. Falls back to the direct socket peer when
+    there's no X-Forwarded-For (local/dev)."""
+    parts = [p.strip() for p in (x_forwarded_for or "").split(",") if p.strip()]
+    if parts:
+        try:
+            hops = int(os.getenv("TRUSTED_PROXY_HOPS", "1"))
+        except (ValueError, TypeError):
+            hops = 1
+        hops = max(1, hops)
+        idx = len(parts) - hops
+        if idx < 0:
+            idx = 0  # fewer entries than trusted hops -> take the leftmost real one
+        return parts[idx]
+    return (direct_peer or "").strip() or "unknown"
+ 
+ 
 def record_login_failure(db: Session, email: str, ip: str) -> None:
     """Atomically count one FAILED login against BOTH the email and the IP for
     the current hour. Called only after a genuine credential failure - a
