@@ -80,27 +80,46 @@ def get_outcomes(user_id: str, db: Session = Depends(get_db), _auth: dict = Depe
 @router.get("/{user_id}/stats")
 def get_outcome_stats(user_id: str, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
     """Real aggregation backing the dashboard's donut chart and monthly
-    target chart - counts by status, and counts by month for the last
-    3 months, computed from actual logged outcomes (no mock numbers).
+    target chart - each application counted ONCE by its latest status, and by
+    the month of that latest status, computed from actual logged outcomes (no
+    mock numbers).
     """
     import uuid as uuid_module
     try:
         uuid_module.UUID(user_id)
     except ValueError:
         return {"total": 0, "by_status": {}, "by_month": {}}
-    rows = db.query(Outcome).filter(Outcome.user_id == user_id).all()
+ 
+    # An application progresses through statuses over time - applied -> interview
+    # -> offer - and log_outcome INSERTs a NEW Outcome row for each step (it never
+    # updates in place). Counting raw rows would tally that single application
+    # three times, once per status, inflating the donut's total and every segment.
+    # The donut means "where each application LANDED" (its latest status), so
+    # collapse to the latest outcome per listing first - ordered updated_at ASC so
+    # the dict keeps the most recent status per listing (last write wins). Same
+    # latest-per-listing dedup the calibration / reminders routes already use.
+    rows = (
+        db.query(Outcome)
+        .filter(Outcome.user_id == user_id)
+        .order_by(Outcome.updated_at.asc())
+        .all()
+    )
+    latest_by_listing = {}  # listing_id -> latest Outcome (via asc ordering, last wins)
+    for r in rows:
+        latest_by_listing[str(r.listing_id)] = r
+    latest = list(latest_by_listing.values())
  
     by_status = {}
-    for r in rows:
+    for r in latest:
         by_status[r.status] = by_status.get(r.status, 0) + 1
  
     by_month = {}
-    for r in rows:
+    for r in latest:
         month_key = r.updated_at.strftime("%b")
         by_month[month_key] = by_month.get(month_key, 0) + 1
  
     return {
-        "total": len(rows),
+        "total": len(latest),
         "by_status": by_status,
         "by_month": by_month,
     }
