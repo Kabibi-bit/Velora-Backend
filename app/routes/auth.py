@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.db_models import User
 from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token, dummy_password_hash
-from app.services.rate_limit import check_login_not_throttled, record_login_failure
+from app.services.rate_limit import login_challenge, record_login_failure, captcha_configured, verify_captcha
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
@@ -65,16 +65,32 @@ def signup(payload: SignupIn, db: Session = Depends(get_db)):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+    # Optional CAPTCHA solution; only needed once the step-up kicks in after
+    # several failed attempts (HTTP 428 tells the client to collect one).
+    captcha_token: str | None = Field(default=None, max_length=4000)
  
  
 @router.post("/login")
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
-    # Brute-force throttle FIRST: reject (429) if this email or client IP has
-    # already hit the failed-login ceiling for the current hour, before spending
-    # a DB lookup or bcrypt on the attempt. Only genuine failures below consume
-    # the budget, so a successful login never throttles the real user. Fails open.
+    # Graduated brute-force response, evaluated BEFORE any DB lookup or bcrypt.
+    # Only genuine failures below consume the budget, so a successful login never
+    # throttles the real user, and the whole thing fails open.
     ip = _client_ip(request)
-    check_login_not_throttled(db, payload.email, ip)
+    challenge = login_challenge(db, payload.email, ip)
+    if challenge == "block":
+        # Far backstop: too many failures even past the CAPTCHA gate.
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait a while and try again.")
+    if challenge == "captcha":
+        # Soft step-up: after a few failures, require a solved CAPTCHA before the
+        # password is even checked - a real user just solves it and continues. If
+        # no provider is configured we can't present one, so fall back to the hard
+        # block rather than let unverified attempts through (fail-closed control).
+        if not captcha_configured():
+            raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait a while and try again.")
+        if not verify_captcha(payload.captcha_token or "", ip):
+            # 428 Precondition Required: distinct from 401 (bad creds) and 429
+            # (blocked), so the client knows to show the CAPTCHA and resubmit.
+            raise HTTPException(status_code=428, detail="Please complete the verification and try again.")
  
     user = db.query(User).filter(User.email == payload.email).first()
     # Always run a real bcrypt verify - against the user's hash, or a dummy hash
