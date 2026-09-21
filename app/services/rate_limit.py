@@ -194,3 +194,86 @@ def ai_budget_used_today(db: Session, user_id: str) -> int:
     """How many AI actions the user has spent from today's shared budget."""
     return usage_today(db, user_id, _TIER_BUDGET_ACTION)
  
+ 
+# ---------------------------------------------------------------------------
+# Login throttling: brute-force protection for the UNAUTHENTICATED /login route.
+# ---------------------------------------------------------------------------
+# The per-user limiters above key on an authenticated user_id, which login
+# doesn't have yet. This throttles by BOTH the email being attempted and the
+# client IP, on a rolling HOUR:
+#   - per-email  -> caps online password-guessing against one specific account
+#   - per-IP     -> caps one source spraying many accounts
+# Only genuine FAILURES consume budget - a correct password never counts - so a
+# real user is never throttled by their own successful logins, and a user who
+# mistypes a few times is clear at the top of the next hour rather than locked
+# out for a whole day. Reuses the existing user_rate_limits table (its columns
+# are VARCHAR, so an email/IP key and an hour-stamped bucket fit with no schema
+# change). Same DB-backed, multi-instance-correct, FAIL-OPEN design as above: a
+# throttle malfunction must never lock everyone out of signing in.
+LOGIN_MAX_FAILS_PER_EMAIL_PER_HOUR = 10
+LOGIN_MAX_FAILS_PER_IP_PER_HOUR = 40
+_LOGIN_FAIL_ACTION = "login_fail"
+ 
+ 
+def _login_bucket() -> str:
+    """Hour-granularity window key for the user_rate_limits.date column. A failed
+    -attempt count naturally resets at the top of each UTC hour."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+ 
+ 
+def _login_keys(email: str, ip: str) -> tuple[str, str]:
+    return ("login:email:" + (email or "").strip().lower(), "login:ip:" + ((ip or "").strip() or "unknown"))
+ 
+ 
+def _rate_limit_count(db: Session, key: str, action: str, bucket: str) -> int:
+    row = db.execute(
+        text("SELECT call_count FROM user_rate_limits WHERE user_id = :k AND action = :a AND date = :d"),
+        {"k": key, "a": action, "d": bucket},
+    ).fetchone()
+    return int(row[0]) if row else 0
+ 
+ 
+def check_login_not_throttled(db: Session, email: str, ip: str) -> None:
+    """Raise HTTP 429 if this email OR this client IP has already hit the
+    failed-login ceiling for the current hour. READ-ONLY - it does not consume
+    budget (only record_login_failure does), so it is safe to call on every
+    attempt before verifying the password. Fails OPEN on any internal error."""
+    bucket = _login_bucket()
+    email_key, ip_key = _login_keys(email, ip)
+    try:
+        email_fails = _rate_limit_count(db, email_key, _LOGIN_FAIL_ACTION, bucket)
+        ip_fails = _rate_limit_count(db, ip_key, _LOGIN_FAIL_ACTION, bucket)
+    except Exception:
+        return  # fail OPEN - a throttle read failure must never block real logins
+    if email_fails >= LOGIN_MAX_FAILS_PER_EMAIL_PER_HOUR or ip_fails >= LOGIN_MAX_FAILS_PER_IP_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many sign-in attempts. Please wait a few minutes and try again.",
+        )
+ 
+ 
+def record_login_failure(db: Session, email: str, ip: str) -> None:
+    """Atomically count one FAILED login against BOTH the email and the IP for
+    the current hour. Called only after a genuine credential failure - a
+    successful login never calls this, so real users don't spend the budget.
+    Each counter is its own atomic upsert; a failure on one still records the
+    other, and any error fails OPEN (a bookkeeping fault must never turn a normal
+    failed login into a 500)."""
+    bucket = _login_bucket()
+    for key in _login_keys(email, ip):
+        try:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO user_rate_limits (user_id, action, date, call_count)
+                    VALUES (:k, :a, :d, 1)
+                    ON CONFLICT (user_id, action, date)
+                    DO UPDATE SET call_count = user_rate_limits.call_count + 1
+                    """
+                ),
+                {"k": key, "a": _LOGIN_FAIL_ACTION, "d": bucket},
+            )
+            db.commit()
+        except Exception:
+            db.rollback()  # fail open; skip this one counter
+ 
