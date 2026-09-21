@@ -13,6 +13,18 @@ score in the first place:
    was actually sent against what the listing asked for, instead of
    generic "keep trying" advice.
 """
+import math
+ 
+ 
+def _round_half_up(x: float) -> int:
+    """JavaScript's Math.round rounds .5 UP; Python's round() uses banker's
+    rounding (half to even). The frontend's compute calibration uses Math.round,
+    so a rate landing exactly on N.5 (e.g. 1 positive of 8 -> 12.5%) rendered as
+    13 on the frontend but 12 on the backend - a real 1-point FE/BE divergence on
+    a user-facing honesty number. floor(x + 0.5) reproduces Math.round for the
+    always-non-negative percentages here. Mirrors matching._round_half_up.
+    """
+    return math.floor(x + 0.5)
  
  
 def compute_calibration(applications: list[dict], outcomes: list[dict]) -> dict:
@@ -48,7 +60,7 @@ def compute_calibration(applications: list[dict], outcomes: list[dict]) -> dict:
  
     result = {}
     for label, b in buckets.items():
-        rate = round((b["positive"] / b["total"]) * 100) if b["total"] > 0 else None
+        rate = _round_half_up((b["positive"] / b["total"]) * 100) if b["total"] > 0 else None
         result[label] = {"total_with_outcomes": b["total"], "positive_rate_pct": rate}
     return result
  
