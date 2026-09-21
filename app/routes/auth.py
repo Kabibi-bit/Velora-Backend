@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.db_models import User
 from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token, dummy_password_hash
-from app.services.rate_limit import login_challenge, record_login_failure, captcha_configured, verify_captcha
+from app.services.rate_limit import login_challenge, record_login_failure, captcha_configured, verify_captcha, real_client_ip, clear_login_failures
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
@@ -13,15 +13,13 @@ VALID_ROLES = {"candidate"}
  
  
 def _client_ip(request: Request) -> str:
-    """The real client IP. Behind Render's proxy the direct peer is the proxy,
-    so the genuine client is the FIRST entry of X-Forwarded-For; fall back to the
-    direct peer when the header is absent (local/dev). Only used as a throttle
-    key - a spoofed value just buckets an attacker under a key they chose, which
-    the per-email limit still covers."""
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """The real client IP for throttle keying. Delegates to real_client_ip, which
+    reads X-Forwarded-For from the RIGHT (the entry the trusted proxy appended) so
+    a client can't spoof the header to dodge the per-IP throttle - see there."""
+    return real_client_ip(
+        request.headers.get("x-forwarded-for", ""),
+        request.client.host if request.client else "",
+    )
  
  
 class SignupIn(BaseModel):
@@ -102,6 +100,7 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
         record_login_failure(db, payload.email, ip)  # count this genuine failure toward the hourly ceiling
         raise HTTPException(status_code=401, detail="Incorrect email or password")
  
+    clear_login_failures(db, payload.email)  # owner authenticated -> reset their email fail budget for the hour
     token = create_access_token(str(user.id), user.role)
     return {"user_id": str(user.id), "email": user.email, "role": user.role, "access_token": token}
  
