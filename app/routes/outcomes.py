@@ -164,7 +164,16 @@ def get_personalization_audit(user_id: str, db: Session = Depends(get_db), _auth
  
     applications = (
         db.query(Application)
-        .filter(Application.user_id == user_id, Application.counterfactual_confidence_pct.isnot(None))
+        .filter(
+            Application.user_id == user_id,
+            Application.counterfactual_confidence_pct.isnot(None),
+            # confidence_pct is a nullable column (Numeric, no nullable=False), and
+            # the audit needs BOTH values as floats - float(a.confidence_pct) on a
+            # NULL (a legacy/partial row that has a counterfactual but no confidence)
+            # would raise TypeError and 500 this route. Guard it the same way the
+            # counterfactual is already guarded, rather than assuming it's set.
+            Application.confidence_pct.isnot(None),
+        )
         .all()
     )
     audit_input = [
@@ -335,9 +344,13 @@ def get_reminders(user_id: str, db: Session = Depends(get_db), _auth: dict = Dep
         org = listing.org if listing else ""
         outcome = latest_outcome.get(lid)
  
-        if outcome and outcome[0] == "interview":
+        if outcome and outcome[0] == "interview" and outcome[1] is not None:
             # to_naive_utc: updated_at is TIMESTAMPTZ (read back tz-aware); subtracting
             # it from the naive `now` would raise on real Postgres without this.
+            # `outcome[1] is not None` guard: updated_at only has a Python-side ORM
+            # default and the schema is applied as raw SQL, so a raw insert can leave
+            # it NULL - to_naive_utc(None) returns None and `now - None` would 500
+            # this route, exactly as the a.sent_at guard below prevents for stale apps.
             days = (now - to_naive_utc(outcome[1])).days
             if days >= INTERVIEW_FOLLOWUP_DAYS:
                 interview_followups.append({"listing_id": lid, "title": title, "org": org, "days_since_interview": days})
