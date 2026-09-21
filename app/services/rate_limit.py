@@ -25,6 +25,10 @@ Usage in a route:
         rate_limit(db, user_id, "expensive-thing", limit_per_day=40)
         ...
 """
+import json
+import os
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -196,22 +200,29 @@ def ai_budget_used_today(db: Session, user_id: str) -> int:
  
  
 # ---------------------------------------------------------------------------
-# Login throttling: brute-force protection for the UNAUTHENTICATED /login route.
+# Login throttling: GRADUATED brute-force protection for the UNAUTHENTICATED
+# /login route - a CAPTCHA step-up first, a hard block only as a far backstop.
 # ---------------------------------------------------------------------------
 # The per-user limiters above key on an authenticated user_id, which login
 # doesn't have yet. This throttles by BOTH the email being attempted and the
-# client IP, on a rolling HOUR:
-#   - per-email  -> caps online password-guessing against one specific account
-#   - per-IP     -> caps one source spraying many accounts
-# Only genuine FAILURES consume budget - a correct password never counts - so a
-# real user is never throttled by their own successful logins, and a user who
-# mistypes a few times is clear at the top of the next hour rather than locked
-# out for a whole day. Reuses the existing user_rate_limits table (its columns
-# are VARCHAR, so an email/IP key and an hour-stamped bucket fit with no schema
-# change). Same DB-backed, multi-instance-correct, FAIL-OPEN design as above: a
-# throttle malfunction must never lock everyone out of signing in.
-LOGIN_MAX_FAILS_PER_EMAIL_PER_HOUR = 10
-LOGIN_MAX_FAILS_PER_IP_PER_HOUR = 40
+# client IP, on a rolling HOUR, in two graduated stages:
+#   - after a FEW failures  -> require a solved CAPTCHA before the password is
+#     even checked. This is the soft gate: a real person who mistyped just solves
+#     a challenge and carries on, while automated guessing is stopped cold.
+#   - after MANY failures   -> a hard 429 block, the backstop for a CAPTCHA-
+#     solving farm sustaining attempts.
+# Per-email caps target one specific account; per-IP caps one source spraying
+# many accounts; the strictest stage either key triggers wins. Only genuine
+# FAILURES consume budget - a correct password never counts - so a real user is
+# never throttled by their own successful logins, and everything resets at the
+# top of the next hour. Reuses the existing user_rate_limits table (VARCHAR
+# columns, so an email/IP key and an hour-stamped bucket fit with no schema
+# change). DB-backed, multi-instance-correct, and FAIL-OPEN: a throttle
+# malfunction must never lock everyone out of signing in.
+LOGIN_CAPTCHA_AFTER_FAILS_PER_EMAIL = 3
+LOGIN_CAPTCHA_AFTER_FAILS_PER_IP = 10
+LOGIN_MAX_FAILS_PER_EMAIL_PER_HOUR = 20   # hard-block backstop (was the sole gate)
+LOGIN_MAX_FAILS_PER_IP_PER_HOUR = 80      # hard-block backstop
 _LOGIN_FAIL_ACTION = "login_fail"
  
  
@@ -233,23 +244,61 @@ def _rate_limit_count(db: Session, key: str, action: str, bucket: str) -> int:
     return int(row[0]) if row else 0
  
  
-def check_login_not_throttled(db: Session, email: str, ip: str) -> None:
-    """Raise HTTP 429 if this email OR this client IP has already hit the
-    failed-login ceiling for the current hour. READ-ONLY - it does not consume
-    budget (only record_login_failure does), so it is safe to call on every
-    attempt before verifying the password. Fails OPEN on any internal error."""
+def login_challenge(db: Session, email: str, ip: str) -> str:
+    """The graduated brute-force decision for one login attempt. Returns one of:
+      'none'    - allow the attempt normally,
+      'captcha' - require a solved CAPTCHA before checking the password (soft
+                  step-up: a real user just solves it; a bot is stopped),
+      'block'   - hard 429 backstop (too many failures even past the CAPTCHA gate).
+    Based on the failed-login counts for THIS email and THIS IP in the current
+    hour; the STRICTEST level either key triggers wins. READ-ONLY (only
+    record_login_failure consumes budget), so it is safe to call on every attempt
+    before verifying the password. FAILS OPEN to 'none' on any internal error - a
+    throttle malfunction must never lock everyone out of signing in."""
     bucket = _login_bucket()
     email_key, ip_key = _login_keys(email, ip)
     try:
         email_fails = _rate_limit_count(db, email_key, _LOGIN_FAIL_ACTION, bucket)
         ip_fails = _rate_limit_count(db, ip_key, _LOGIN_FAIL_ACTION, bucket)
     except Exception:
-        return  # fail OPEN - a throttle read failure must never block real logins
+        return "none"  # fail OPEN - a throttle read failure must never block real logins
     if email_fails >= LOGIN_MAX_FAILS_PER_EMAIL_PER_HOUR or ip_fails >= LOGIN_MAX_FAILS_PER_IP_PER_HOUR:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many sign-in attempts. Please wait a few minutes and try again.",
-        )
+        return "block"
+    if email_fails >= LOGIN_CAPTCHA_AFTER_FAILS_PER_EMAIL or ip_fails >= LOGIN_CAPTCHA_AFTER_FAILS_PER_IP:
+        return "captcha"
+    return "none"
+ 
+ 
+def captcha_configured() -> bool:
+    """True only if a CAPTCHA provider secret is set (CAPTCHA_SECRET_KEY). When
+    false, the login route falls back to the hard block at the CAPTCHA threshold
+    rather than presenting a challenge it has no way to verify - so security is
+    never weakened before a provider is wired up."""
+    return bool(os.getenv("CAPTCHA_SECRET_KEY"))
+ 
+ 
+def verify_captcha(token: str, remote_ip: str = "") -> bool:
+    """Verify a CAPTCHA token server-side. Provider-agnostic: Cloudflare
+    Turnstile, Google reCAPTCHA and hCaptcha all accept the same
+    {secret, response, remoteip} POST and return {"success": bool} - pick one via
+    CAPTCHA_VERIFY_URL (defaults to Turnstile). FAILS CLOSED: returns False on a
+    missing secret or token, a network/timeout error, a non-2xx, or any body that
+    isn't an explicit success - an unverifiable token is never treated as a passed
+    challenge. stdlib-only, so no new dependency."""
+    secret = os.getenv("CAPTCHA_SECRET_KEY")
+    if not secret or not token:
+        return False
+    verify_url = os.getenv("CAPTCHA_VERIFY_URL", "https://challenges.cloudflare.com/turnstile/v0/siteverify")
+    try:
+        payload = urllib.parse.urlencode(
+            {"secret": secret, "response": token, "remoteip": remote_ip or ""}
+        ).encode("utf-8")
+        req = urllib.request.Request(verify_url, data=payload, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 (fixed provider URL, not user input)
+            body = json.loads(r.read().decode("utf-8"))
+        return bool(isinstance(body, dict) and body.get("success") is True)
+    except Exception:
+        return False
  
  
 def record_login_failure(db: Session, email: str, ip: str) -> None:
