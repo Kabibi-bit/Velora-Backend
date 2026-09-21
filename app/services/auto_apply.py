@@ -405,6 +405,12 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
         text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
+        # json.loads succeeding doesn't guarantee a dict - an LLM can return a
+        # JSON list or bare string. Without this, parsed.get("subject") below
+        # (which is OUTSIDE this try) would AttributeError and propagate uncaught.
+        # Raise here so it degrades to the same graceful error return.
+        if not isinstance(parsed, dict):
+            raise ValueError(f"draft response was not a JSON object: {type(parsed).__name__}")
     except Exception as e:
         return {"error": f"draft_generation_failed: {e}"}
  
@@ -532,6 +538,12 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(text)
+        # json.loads succeeding doesn't guarantee a dict - an LLM can return a
+        # JSON list or bare string. Without this, parsed.get("subject") below
+        # (which is OUTSIDE this try) would AttributeError and propagate uncaught.
+        # Raise here so it degrades to the same graceful error return.
+        if not isinstance(parsed, dict):
+            raise ValueError(f"draft response was not a JSON object: {type(parsed).__name__}")
     except Exception as e:
         return {"error": f"draft_generation_failed: {e}"}
  
