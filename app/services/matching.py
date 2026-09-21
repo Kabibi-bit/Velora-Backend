@@ -527,7 +527,14 @@ def compute_signal_score(scored_listing: dict) -> dict:
         score *= 0.7
     elif sig["ghost_risk"] == "elevated":
         score *= 0.88
-    score = max(0, min(97, round(score)))
+    # _round_half_up, not round(): score here is a FLOAT (fit * freshness *
+    # ghost multipliers), so it lands on exact N.5 values in the real domain
+    # (e.g. fit 75 * 0.94 recent = 70.5). The frontend's computeSignalScore uses
+    # Math.round (half up), and the scorer already uses _round_half_up for the
+    # same reason - plain round()'s banker's rounding made the Signal Score read
+    # 70 on the backend but 71 on the frontend for the same listing. Half-up
+    # keeps the honest number identical on both paths.
+    score = max(0, min(97, _round_half_up(score)))
  
     fr = sig["freshness"]
     if sig["ghost_risk"] == "high":
@@ -1130,7 +1137,17 @@ def rank_listings(listings: list[dict], profile: dict, top_n: int = 10, tag_weig
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
             continue
-        adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
+        # Defensive tags access, consistent with explain_score's isinstance
+        # guard above: score_listing already accepted this listing using
+        # `.get("tags") or []`, so a listing with a missing "tags" key or a
+        # None/non-list tags value reaches here after being scored. The old
+        # subscript `listing["tags"]` then KeyError'd (missing key) or the
+        # iteration TypeError'd (tags is None) - crashing the ENTIRE ranking,
+        # but only for a personalized user (non-empty tag_weights), which made
+        # it easy to miss. Guard it the same way the rest of this module does.
+        _adj_tags = listing.get("tags")
+        _adj_tags = _adj_tags if isinstance(_adj_tags, (list, tuple)) else []
+        adjustment = sum(tag_weights.get(tag, 0) for tag in _adj_tags)
         # Honest 97 ceiling holds AFTER personalization too: score_listing caps
         # the raw pct at 97 (no vanity 100s), but tag_weights adjustment used to
         # be clamped to min(100, ...), so a strong match with positive learned
@@ -1182,7 +1199,17 @@ def rank_listings_with_near_misses(listings: list[dict], profile: dict, top_n: i
         match = score_listing(listing, profile, factor_weights=factor_weights, roadmap_milestones=roadmap_milestones)
         if match is None:
             continue
-        adjustment = sum(tag_weights.get(tag, 0) for tag in listing["tags"])
+        # Defensive tags access, consistent with explain_score's isinstance
+        # guard above: score_listing already accepted this listing using
+        # `.get("tags") or []`, so a listing with a missing "tags" key or a
+        # None/non-list tags value reaches here after being scored. The old
+        # subscript `listing["tags"]` then KeyError'd (missing key) or the
+        # iteration TypeError'd (tags is None) - crashing the ENTIRE ranking,
+        # but only for a personalized user (non-empty tag_weights), which made
+        # it easy to miss. Guard it the same way the rest of this module does.
+        _adj_tags = listing.get("tags")
+        _adj_tags = _adj_tags if isinstance(_adj_tags, (list, tuple)) else []
+        adjustment = sum(tag_weights.get(tag, 0) for tag in _adj_tags)
         # Honest 97 ceiling holds AFTER personalization too: score_listing caps
         # the raw pct at 97 (no vanity 100s), but tag_weights adjustment used to
         # be clamped to min(100, ...), so a strong match with positive learned
@@ -1229,7 +1256,14 @@ def compute_roadmap_alignment(listing: dict, milestones: list) -> dict | None:
     """
     if not milestones:
         return None
-    listing_tags = listing.get("tags", [])
+    # Defensive tags handling: this re-reads the RAW listing dict (not the
+    # coerced tag list score_listing built), so a non-list tags value or a
+    # non-string element (a number/null/dict from a legacy row, an LLM
+    # extraction, or a malformed payload) would hit tag.lower() below and crash
+    # the scorer for any user who has a roadmap. Keep only real string tags -
+    # matches the isinstance defensiveness used elsewhere in this module.
+    raw_tags = listing.get("tags")
+    listing_tags = [t for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, (list, tuple)) else []
     if not listing_tags:
         return None
     best_stage, best_matched, best_strength = None, [], 0.0
