@@ -1,14 +1,27 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
  
 from app.db import get_db
 from app.models.db_models import User
 from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token, dummy_password_hash
+from app.services.rate_limit import check_login_not_throttled, record_login_failure
  
 router = APIRouter(prefix="/auth", tags=["auth"])
  
 VALID_ROLES = {"candidate"}
+ 
+ 
+def _client_ip(request: Request) -> str:
+    """The real client IP. Behind Render's proxy the direct peer is the proxy,
+    so the genuine client is the FIRST entry of X-Forwarded-For; fall back to the
+    direct peer when the header is absent (local/dev). Only used as a throttle
+    key - a spoofed value just buckets an attacker under a key they chose, which
+    the per-email limit still covers."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
  
  
 class SignupIn(BaseModel):
@@ -55,7 +68,14 @@ class LoginIn(BaseModel):
  
  
 @router.post("/login")
-def login(payload: LoginIn, db: Session = Depends(get_db)):
+def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
+    # Brute-force throttle FIRST: reject (429) if this email or client IP has
+    # already hit the failed-login ceiling for the current hour, before spending
+    # a DB lookup or bcrypt on the attempt. Only genuine failures below consume
+    # the budget, so a successful login never throttles the real user. Fails open.
+    ip = _client_ip(request)
+    check_login_not_throttled(db, payload.email, ip)
+ 
     user = db.query(User).filter(User.email == payload.email).first()
     # Always run a real bcrypt verify - against the user's hash, or a dummy hash
     # of equal cost when the email is unknown - so response time doesn't reveal
@@ -63,6 +83,7 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     # dummy path always yields False; the generic error below covers both cases.
     password_ok = verify_password(payload.password, user.password_hash if user else dummy_password_hash())
     if not user or not password_ok:
+        record_login_failure(db, payload.email, ip)  # count this genuine failure toward the hourly ceiling
         raise HTTPException(status_code=401, detail="Incorrect email or password")
  
     token = create_access_token(str(user.id), user.role)
