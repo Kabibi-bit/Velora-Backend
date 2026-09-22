@@ -214,6 +214,19 @@ def list_applications(user_id: str, db: Session = Depends(get_db), _auth: dict =
             "created_at": a.created_at.isoformat(),
             "outcome_status": outcome_status_by_listing.get(str(a.listing_id)),
             "outcome_logged_at": outcome_time_by_listing[str(a.listing_id)].isoformat() if outcome_time_by_listing.get(str(a.listing_id)) else None,
+            # The frontend overwrites local application state with this response
+            # (overview/workshop call saveApplications(bApps)), and its
+            # outcome-learned personalization, self-audit, and factor-interaction
+            # features read these two off each application:
+            # getPersonalizedFactorWeightsJS / getFactorReliabilityDetail /
+            # computeFactorInteractions filter on factors_snapshot, and
+            # auditPersonalizationEffect needs counterfactual_confidence_pct.
+            # Omitting them silently reset ALL of those to "no data" on a logged-in
+            # user's next visit even though the backend stored them - the exact
+            # hydration-drop already fixed just above for outcome_status.
+            # `is not None` (not truthiness) so a genuine 0 counterfactual survives.
+            "counterfactual_confidence_pct": float(a.counterfactual_confidence_pct) if a.counterfactual_confidence_pct is not None else None,
+            "factors_snapshot": a.factors_snapshot,
         }
         for a, l in rows
     ]
