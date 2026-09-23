@@ -199,7 +199,11 @@ def _resolve_form_context(page, timeout_ms: int):
     load. This polls every frame until a form appears, preferring a frame whose URL
     is a known ATS embed. Falls back to the page so callers always get a context."""
     import time
-    deadline = time.time() + max(3.0, timeout_ms / 1000.0)
+    # Bound the wait: a real ATS form renders within a few seconds. Polling the
+    # full request timeout here (e.g. 25s) would hang an inline request on any
+    # page that simply has no fillable form ("apply on our website" postings), so
+    # cap this at ~8s regardless of the overall timeout.
+    deadline = time.time() + max(3.0, min(8.0, timeout_ms / 1000.0))
     # First, give a known ATS iframe a chance to be the answer.
     while time.time() < deadline:
         for f in page.frames:
@@ -374,8 +378,12 @@ def submit_application_via_browser(
                     submit.click(timeout=6000)
                 except Exception as e:
                     return {"status": "needs_manual", "reason": f"couldn't click submit: {e}"}
+                # Bounded wait for the post-submit navigation/confirmation. Capped
+                # (not the full request timeout) so a page that never goes network-
+                # idle - long-polling, websockets, analytics beacons - can't hang
+                # the request; 8s is ample to see a redirect or an inline confirmation.
                 try:
-                    page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                    page.wait_for_load_state("networkidle", timeout=8000)
                 except Exception:
                     pass
  
