@@ -39,6 +39,7 @@ not automatic.
 from __future__ import annotations
  
 import logging
+import os
  
 _log = logging.getLogger("velora")
  
@@ -303,13 +304,23 @@ def submit_application_via_browser(
  
                 # 3) Resume upload (Greenhouse and most ATSes REQUIRE it). Playwright
                 #    sets files even on a hidden/custom-styled file input.
-                if resume_path:
+                if resume_path and os.path.exists(resume_path):
                     try:
                         file_input = ctx.locator("input[type=file]").first
                         if file_input.count() > 0:
-                            file_input.set_input_files(resume_path, timeout=5000)
+                            # A real browser file-set can transiently hang; a bounded
+                            # retry improves the success rate without ever blocking
+                            # for long. If it still fails and the file is required,
+                            # the required-field guard below aborts safely.
+                            for _attempt in range(2):
+                                try:
+                                    file_input.set_input_files(resume_path, timeout=5000)
+                                    break
+                                except Exception:
+                                    if _attempt == 1:
+                                        raise
                     except Exception:
-                        pass  # if it fails and the file is required, the guard below aborts
+                        pass
  
                 # 4) ANTI-GARBAGE GUARD: only proceed if every required control is
                 #    satisfied. If we couldn't map a required field, hand off.
