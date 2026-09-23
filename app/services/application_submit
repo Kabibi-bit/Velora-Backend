@@ -118,6 +118,17 @@ def _required_controls_all_satisfied(page) -> bool:
             try:
                 if not c.is_visible():
                     continue
+                tag = (c.evaluate("el => el.tagName") or "").upper()
+                if tag == "SELECT":
+                    # A required dropdown is treated as UNSATISFIED because the
+                    # submitter never chooses dropdown answers. Many required
+                    # selects are materially high-stakes - visa sponsorship, work
+                    # authorization, EEO/veteran/disability status - and a <select>
+                    # always has a default option, so trusting its value would mean
+                    # auto-submitting a GUESSED answer to a question like "Do you
+                    # require sponsorship?" under the user's name. That is exactly
+                    # the kind of fabrication this must never do, so hand off instead.
+                    return False
                 type_attr = (c.get_attribute("type") or "").lower()
                 if type_attr in ("checkbox", "radio"):
                     # Required consent/eligibility box we didn't knowingly check -
