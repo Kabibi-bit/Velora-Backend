@@ -21,6 +21,58 @@ from app.services.auto_apply import (
 from app.services.timeutil import utcnow, to_naive_utc
  
 _log = logging.getLogger("velora")
+ 
+ 
+def _applicant_context(db, user_id):
+    """Assemble the real applicant data used to fill a web application form for
+    Pro auto-submit: a candidate dict (name/email/phone) and, when the user has
+    real resume entries, a generated .docx resume file to upload. Returns
+    (candidate, resume_path_or_None). resume_path, if returned, is a temp file
+    the caller must delete. Never invents data - missing fields stay empty, and
+    the submitter safely hands off any form that needs what we don't have."""
+    import os as _os
+    import tempfile
+    from app.models.db_models import Profile, ResumeEntry, User
+    user = db.query(User).filter(User.id == user_id).first()
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    email = (user.email if user else "") or ""
+    full_name = ((profile.full_name if profile else "") or "").strip()
+    phone = ((profile.phone if profile else "") or "").strip()
+    first, last = "", ""
+    if full_name:
+        parts = full_name.split()
+        first, last = parts[0], (parts[-1] if len(parts) > 1 else "")
+    candidate = {"full_name": full_name, "first_name": first, "last_name": last, "email": email, "phone": phone}
+ 
+    resume_path = None
+    try:
+        entries = (
+            db.query(ResumeEntry)
+            .filter(ResumeEntry.user_id == user_id)
+            .order_by(ResumeEntry.display_order.asc())
+            .all()
+        )
+        if entries:
+            from app.services.resume_docx import generate_resume_document
+            polished = [{
+                "title": e.title or "",
+                "org": e.org or "",
+                "dates": " - ".join(x for x in [e.start_date, e.end_date] if x),
+                "bullets": [e.raw_description] if e.raw_description else [],
+            } for e in entries]
+            skills = [s.strip() for s in ((profile.skills if profile else "") or "").replace(",", " ").split() if s.strip()]
+            data = generate_resume_document(email, None, polished, skills)
+            fd, resume_path = tempfile.mkstemp(suffix=".docx")
+            with _os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+    except Exception as e:
+        _log.warning("Could not build a resume file for auto-submit - %s", e)
+        resume_path = None
+    return candidate, resume_path
 router = APIRouter(prefix="/applications", tags=["applications"])
  
  
@@ -274,7 +326,7 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
     named person - only a general, best-effort company address, and only when
     Metis judges a direct email genuinely more effective than the real posting.
     """
-    from app.models.db_models import Listing
+    from app.models.db_models import Listing, Profile as Profile_
     from app.services.email_send import send_email
     import uuid as uuid_module
     try:
@@ -285,16 +337,20 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")
     verify_token_belongs_to_user(str(app_record.user_id), authorization)
-    if app_record.status != "approved":
+    # "approved" is a fresh send; "ready_to_submit" is a retry of a delivery that
+    # previously fell back to the hand-off (e.g. the user has now granted consent),
+    # so allow it to re-attempt without going back through the undo window.
+    if app_record.status not in ("approved", "ready_to_submit"):
         raise HTTPException(status_code=400, detail="Application is not approved yet")
-    # Coerce the DB value to naive UTC: sendable_at is TIMESTAMPTZ, so psycopg2
-    # reads it back tz-aware, and comparing/subtracting it against the naive
-    # utcnow() would raise "can't compare offset-naive and offset-aware datetimes"
-    # on real Postgres (it just happens to work if the dev DB returns naive).
-    _sendable_at = to_naive_utc(app_record.sendable_at)
-    if _sendable_at and utcnow() < _sendable_at:
-        remaining = (_sendable_at - utcnow()).seconds // 60
-        raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
+    if app_record.status == "approved":
+        # Coerce the DB value to naive UTC: sendable_at is TIMESTAMPTZ, so psycopg2
+        # reads it back tz-aware, and comparing/subtracting it against the naive
+        # utcnow() would raise "can't compare offset-naive and offset-aware datetimes"
+        # on real Postgres (it just happens to work if the dev DB returns naive).
+        _sendable_at = to_naive_utc(app_record.sendable_at)
+        if _sendable_at and utcnow() < _sendable_at:
+            remaining = (_sendable_at - utcnow()).seconds // 60
+            raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
  
     # Meter this: send now makes a paid AI call (Metis' channel decision), so an
     # unmetered send would let one token run up an unbounded bill. Matches the
@@ -320,9 +376,10 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
         except Exception as e:
             _log.warning("Delivery-channel decision failed, defaulting to web hand-off - %s", e)
  
-    def _web_handoff(reasoning: str, email_error: bool = False):
-        # The real route is the posting's own form, which the app cannot submit
-        # for the user - so hand back the finished application + the direct link.
+    def _web_handoff(reasoning: str, email_error: bool = False, pro_only: bool = False, auto_note: str = None, consent_needed: bool = False):
+        # The real route is the posting's own form. When it can't be auto-submitted
+        # (free tier, no consent, a blocker, or a field we can't safely fill), hand
+        # back the finished application + the direct link for the user to submit.
         app_record.status = "ready_to_submit"
         app_record.sent_channel = "web"
         db.commit()
@@ -333,6 +390,12 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
         }
         if email_error:
             out["email_error"] = True
+        if pro_only:
+            out["auto_submit_pro_only"] = True
+        if consent_needed:
+            out["auto_submit_consent_needed"] = True
+        if auto_note:
+            out["auto_submit_note"] = auto_note
         return out
  
     if plan.get("channel") == "email" and plan.get("to_address"):
@@ -361,7 +424,61 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
             "reasoning": plan.get("reasoning", ""),
         }
  
-    return _web_handoff(plan.get("reasoning", ""))
+    # Web channel: the real route is the posting's own form. Pro members get a
+    # real best-effort browser auto-submission first; free members (and any form
+    # that can't be auto-completed safely) get the honest hand-off.
+    from app.services.tiers import tier_has_feature, get_user_tier
+    reasoning = plan.get("reasoning", "")
+    if not tier_has_feature(get_user_tier(db, str(app_record.user_id)), "auto_submit"):
+        return _web_handoff(reasoning, pro_only=True)
+ 
+    # Explicit, revocable permission is required before Kaidostar uses the user's
+    # personal details to submit an application to an employer on their behalf.
+    _profile = (
+        db.query(Profile_)
+        .filter(Profile_.user_id == app_record.user_id, Profile_.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not (_profile and getattr(_profile, "auto_submit_consent", False)):
+        return _web_handoff(reasoning, consent_needed=True,
+                            auto_note="Give Kaidostar permission to submit applications for you to turn on automatic submission.")
+ 
+    # Pro/Max + consent: meter, then attempt the real submission. The submitter is
+    # safety-first - it aborts on logins/CAPTCHAs or any required field it can't
+    # fill, and only reports success on a real confirmation - so this never
+    # submits a garbled application, and falls back to the hand-off otherwise.
+    rate_limit_by_tier(db, str(app_record.user_id), "application-autosubmit", per_action_limit=40)
+    from app.services.application_submit import submit_application_via_browser
+    candidate, resume_path = _applicant_context(db, app_record.user_id)
+    try:
+        result = submit_application_via_browser(
+            listing.apply_url, candidate,
+            resume_path=resume_path, cover_letter=app_record.draft_content,
+        )
+    except Exception as e:
+        _log.warning("Auto-submit crashed, handing off - %s", e)
+        result = {"status": "error", "reason": str(e)}
+    finally:
+        if resume_path:
+            try:
+                os.remove(resume_path)
+            except Exception:
+                pass
+ 
+    if result.get("status") == "submitted":
+        app_record.status = "sent"
+        app_record.sent_at = utcnow()
+        app_record.sent_channel = "web_auto"
+        db.commit()
+        return {
+            "status": "sent", "channel": "web_auto",
+            "sent_at": app_record.sent_at.isoformat(),
+            "apply_url": listing.apply_url,
+            "reasoning": reasoning,
+            "auto_submit_note": result.get("reason", ""),
+        }
+    # Couldn't auto-complete it safely - honest hand-off with the real reason.
+    return _web_handoff(reasoning, auto_note=result.get("reason", ""))
  
  
 @router.post("/{application_id}/mark-submitted")
