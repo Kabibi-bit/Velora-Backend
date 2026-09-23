@@ -23,6 +23,9 @@ class SurveyIn(BaseModel):
     skills: str = Field(max_length=2000)
     dealbreakers: str | None = Field(default=None, max_length=2000)
     location_pref: str | None = Field(default=None, max_length=200)
+    full_name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=50)
+    auto_submit_consent: bool = False
     target_types: list[str] = Field(max_length=50)
     is_athlete: bool = False
     sport: str | None = Field(default=None, max_length=100)
@@ -136,6 +139,9 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
         skills=payload.skills,
         dealbreakers=payload.dealbreakers,
         location_pref=payload.location_pref,
+        full_name=payload.full_name,
+        phone=payload.phone,
+        auto_submit_consent=payload.auto_submit_consent,
         target_types=payload.target_types,
         is_athlete=payload.is_athlete,
         sport=payload.sport,
@@ -229,6 +235,9 @@ def get_current_profile(user_id: str, db: Session = Depends(get_db), _auth: dict
         "skills": profile.skills,
         "dealbreakers": profile.dealbreakers,
         "location_pref": profile.location_pref,
+        "full_name": profile.full_name,
+        "phone": profile.phone,
+        "auto_submit_consent": profile.auto_submit_consent,
         "target_types": profile.target_types,
         "is_athlete": profile.is_athlete,
         "position": profile.position,
@@ -372,4 +381,32 @@ def get_auto_apply_settings(user_id: str, db: Session = Depends(get_db), _auth: 
     if not profile:
         raise HTTPException(status_code=404, detail="No current profile for this user")
     return {"enabled": profile.auto_apply_enabled, "threshold": profile.auto_apply_threshold}
+ 
+ 
+class AutoSubmitConsentIn(BaseModel):
+    granted: bool
+ 
+ 
+@router.post("/{user_id}/auto-submit-consent")
+def set_auto_submit_consent(user_id: str, payload: AutoSubmitConsentIn, db: Session = Depends(get_db), _auth: dict = Depends(require_auth_for_user)):
+    """Grant or revoke permission for Kaidostar to submit applications to
+    employers on the user's behalf (Pro auto-submit). This is the real
+    enforcement point together with the send flow, which refuses to auto-submit
+    unless this is true - so consent is opt-in and revocable at any time without
+    redoing the whole profile survey."""
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="No current profile for this user")
+    profile.auto_submit_consent = bool(payload.granted)
+    db.commit()
+    return {"auto_submit_consent": profile.auto_submit_consent}
  
