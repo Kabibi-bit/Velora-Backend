@@ -163,6 +163,13 @@ class Application(Base):
     status = Column(String, default="pending_review")
     sendable_at = Column(DateTime)
     sent_at = Column(DateTime)
+    # How/where an accepted application was actually delivered. "email" means a
+    # real email went to sent_to_address (a best-effort general company address);
+    # "web" means the real route is the posting's own form and the finished draft
+    # was handed to the user to submit (the app cannot auto-submit arbitrary web
+    # forms). Both nullable - populated only once a delivery is attempted.
+    sent_channel = Column(String, nullable=True)
+    sent_to_address = Column(String, nullable=True)
     auto_generated = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     factors_snapshot = Column(JSONB, nullable=True)  # the score_listing() factor breakdown at creation time - without this, there's no way to later learn which TYPES of signal actually predicted success for this user
