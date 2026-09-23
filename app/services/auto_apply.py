@@ -155,6 +155,126 @@ def draft_application(anthropic_client, listing: dict, profile: dict, resume_ent
     return {"text": text, "flagged_terms": sorted(flagged)}
  
  
+def decide_application_delivery(anthropic_client, listing: dict) -> dict:
+    """Metis decides the most EFFECTIVE real delivery channel for one
+    listing when the user accepts an application, and returns a plan
+    the send step can actually execute:
+ 
+        {channel: "email"|"web", to_address: str|None,
+         subject: str, reasoning: str}
+ 
+    Two honest, hard constraints shape this:
+ 
+      1. There is no programmatic way to submit an arbitrary job
+         site's WEB FORM (each ATS - Greenhouse, Lever, Workday, a
+         company careers page - needs its own auth, resume-file
+         upload, often a CAPTCHA). So "web" does not mean the app
+         submits the form; it means the real route is the posting's
+         own apply_url and the finished application is handed to the
+         user to submit there. Claiming otherwise would be exactly
+         the fabrication this product refuses.
+      2. The app never invents a specific named person's address. The
+         only email it will use is a general company contact
+         (careers@/jobs@...), guessed deterministically from the org
+         name by email_send.guess_contact_emails and always treated
+         as best-effort, never "verified". The AI chooses the
+         STRATEGY (is a direct email genuinely more effective than the
+         formal posting for THIS listing?); the code supplies the
+         address, so the model can never hallucinate one.
+ 
+    Metis genuinely reasons per listing: a standard posting routed
+    through a real ATS is usually best applied to through its own
+    form (channel "web"), while a small org / direct-contact role
+    where a formal pipeline is unlikely can be more effective as a
+    direct, specific email (channel "email"). It raises ValueError on
+    an unusable response so the caller can fall back safely to "web".
+    """
+    from app.services.email_send import guess_contact_emails
+ 
+    # Code-side, deterministic: the ONLY address we'll ever email is a
+    # general, best-effort company contact - never AI-produced.
+    guessed = guess_contact_emails(listing.get("org") or "")
+    guessed_address = (guessed.get("candidates") or [None])[0]
+ 
+    description = (listing.get("description") or "").strip()
+    context = (
+        f'Job: "{listing.get("title", "")}" at {listing.get("org", "")} '
+        f'(type: {listing.get("type", "unknown")}).\n'
+        f'It has a real application URL (a web posting): {"yes" if listing.get("apply_url") else "no"}.\n'
+        + (f'The posting text: "{description[:600]}"\n' if description else "")
+        + (
+            f"If a direct email is chosen, it would go to a GENERAL company address "
+            f"({guessed_address}) - a best-effort guess, not a specific named person - since we never invent a real person's contact.\n"
+            if guessed_address else
+            "No plausible company email address can be formed from the org name.\n"
+        )
+    )
+    prompt = (
+        context + "\n"
+        "Decide the single most EFFECTIVE way for this candidate to actually get their application seen for THIS role, "
+        "choosing only between two real options:\n"
+        '- "web": the posting has a real formal application route (an applicant tracking system / careers page), so applying '
+        "through its own apply_url is the route that actually reaches the hiring pipeline. Most standard postings at real "
+        "companies are this.\n"
+        '- "email": this looks like a smaller org, a direct-contact role, or a posting where a specific, well-written direct '
+        "email to a general company hiring address would genuinely be more effective than a formal application - and a formal "
+        "pipeline is unlikely to exist or unlikely to be where the decision is really made.\n\n"
+        "Be honest and realistic: do NOT pick email just to seem proactive. A cold email to a general address is usually LESS "
+        "effective than applying through a real posting, so pick email only when it genuinely is the better route. If no company "
+        'address is available, you must pick "web".\n\n'
+        "Return ONLY a JSON object with exactly these keys:\n"
+        '- channel: "web" or "email"\n'
+        '- subject: if channel is "email", a specific, non-generic subject line for that email; if "web", an empty string\n'
+        '- reasoning: one honest sentence explaining why this channel is the more effective real route for this specific listing\n'
+        "Return ONLY valid JSON, no markdown fences, no commentary."
+    )
+ 
+    import json
+    try:
+        resp = anthropic_client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join((b.text or "") for b in resp.content if b.type == "text").strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(text)
+    except Exception as e:
+        raise ValueError(f"delivery-channel decision failed: {e}")
+ 
+    if not isinstance(parsed, dict):
+        raise ValueError(f"delivery-channel response was not a JSON object: {type(parsed).__name__}")
+    channel = parsed.get("channel")
+    if channel not in ("web", "email"):
+        raise ValueError(f"delivery-channel response had an invalid channel: {parsed!r}")
+    if not isinstance(parsed.get("reasoning"), str):
+        raise ValueError(f"delivery-channel response is missing a real reasoning string: {parsed!r}")
+ 
+    # Honesty backstop: email is only usable if we actually have an
+    # address. If Metis picked email but no company address could be
+    # formed, fall back to the real posting route rather than pretend.
+    if channel == "email" and not guessed_address:
+        channel = "web"
+ 
+    if channel == "email":
+        subject = parsed.get("subject")
+        if not isinstance(subject, str) or not subject.strip():
+            subject = f'Application: {listing.get("title", "")} at {listing.get("org", "")}'.strip()
+        return {
+            "channel": "email",
+            "to_address": guessed_address,
+            "address_is_guess": True,
+            "subject": subject.strip(),
+            "reasoning": parsed["reasoning"].strip(),
+        }
+    return {
+        "channel": "web",
+        "to_address": None,
+        "address_is_guess": False,
+        "subject": "",
+        "reasoning": parsed["reasoning"].strip(),
+    }
+ 
+ 
 def compute_composite_confidence(match_score_pct: float) -> int:
     """Roadmap alignment used to need a separate bonus here, because
     match_score_pct never reflected it at all - it was purely
@@ -572,4 +692,3 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         "leadership_grounded": grounded,
         "leaders": [l.get("name") for l in leaders],
     }
- 
