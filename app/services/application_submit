@@ -54,7 +54,11 @@ _CONFIRM_MARKERS = (
     "we have received", "we've received", "we'll be in touch", "thank you for your application",
     "your application has been", "application complete",
 )
-_CONFIRM_URL_MARKERS = ("thank", "confirm", "success", "complete", "submitted", "received")
+# Confirmation-specific URL tokens. Deliberately specific (not bare "complete"/
+# "success"/"thank", which appear incidentally in real posting URLs and would
+# falsely confirm) and only ever counted when the URL CHANGES after submit -
+# i.e. a navigation TO a thank-you page, never the apply URL that was already open.
+_CONFIRM_URL_MARKERS = ("thank-you", "thankyou", "thank_you", "/thanks", "confirmation", "/confirmed", "application-received", "application-submitted")
  
  
 def check_browser_available() -> dict:
@@ -137,20 +141,37 @@ def _required_controls_all_satisfied(page) -> bool:
         return False
  
  
-def _looks_confirmed(page, ctx=None) -> bool:
+def _confirmation_text_present(page, ctx=None) -> bool:
+    """True if a specific confirmation PHRASE is visible in the body of the form
+    context or the page. The phrases are specific ('thank you for applying',
+    'application received', ...), so incidental words don't trip it - but see
+    the caller: this is only treated as confirmation when it appears AFTER submit
+    having NOT been present before (so instructional text like 'once your
+    application is received...' can't produce a false positive)."""
+    for c in (ctx, page):
+        if c is None:
+            continue
+        try:
+            body = (c.locator("body").inner_text(timeout=3000) or "").lower()
+            if any(m in body for m in _CONFIRM_MARKERS):
+                return True
+        except Exception:
+            continue
+    return False
+ 
+ 
+def _looks_confirmed(page, ctx=None, pre_url: str = "", pre_text: bool = False) -> bool:
+    """A submission is confirmed only by a CHANGE after clicking submit - never by
+    text or a URL that was already there. This is the safety-critical guard: a
+    false positive (marking an application 'sent' that wasn't) is the worst
+    outcome, so confirmation requires either (a) the URL navigated to a
+    confirmation-specific page, or (b) a confirmation phrase newly appeared."""
     try:
-        url = (page.url or "").lower()
-        if any(m in url for m in _CONFIRM_URL_MARKERS):
+        post_url = (page.url or "")
+        if post_url != pre_url and any(m in post_url.lower() for m in _CONFIRM_URL_MARKERS):
             return True
-        for c in (ctx, page):
-            if c is None:
-                continue
-            try:
-                body = (c.locator("body").inner_text(timeout=3000) or "").lower()
-                if any(m in body for m in _CONFIRM_MARKERS):
-                    return True
-            except Exception:
-                continue
+        if _confirmation_text_present(page, ctx) and not pre_text:
+            return True
         return False
     except Exception:
         return False
@@ -327,6 +348,13 @@ def submit_application_via_browser(
                 if not _required_controls_all_satisfied(ctx):
                     return {"status": "needs_manual", "reason": "the form has required fields this couldn't fill safely"}
  
+                # Capture pre-submit state so confirmation is judged by what CHANGES
+                # after submit, not by text/URL that was already present (the fix for
+                # a false "sent" when the apply URL or page incidentally contains a
+                # confirmation word).
+                pre_url = page.url or ""
+                pre_text = _confirmation_text_present(page, ctx)
+ 
                 # 5) Submit (within the form context).
                 submit = None
                 for sel in ["button[type=submit]", "input[type=submit]",
@@ -351,8 +379,10 @@ def submit_application_via_browser(
                 except Exception:
                     pass
  
-                # 6) Only claim success on a real, detectable confirmation.
-                if _looks_confirmed(page, ctx):
+                # 6) Only claim success on a real, detectable confirmation - a change
+                #    after submit (new URL, or a confirmation phrase that wasn't there
+                #    before), never text/URL that was already present.
+                if _looks_confirmed(page, ctx, pre_url=pre_url, pre_text=pre_text):
                     return {"status": "submitted", "reason": "submission confirmed by the posting"}
                 return {"status": "needs_manual", "reason": "submitted the form but couldn't confirm it went through - verify at the posting"}
             finally:
