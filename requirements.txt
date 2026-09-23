@@ -20,4 +20,8 @@ PyJWT==2.10.1
 voyageai==0.3.2
 python-docx==1.1.2
 pytest==8.3.4
+# Pro auto-submit drives a real headless browser to fill/submit web application
+# forms. The deploy must also install the browser binary: `playwright install
+# chromium`. If absent, auto-submit degrades safely to the manual hand-off.
+playwright==1.49.1
  
