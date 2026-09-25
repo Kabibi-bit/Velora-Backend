@@ -23,16 +23,12 @@ from app.services.timeutil import utcnow, to_naive_utc
 _log = logging.getLogger("velora")
  
  
-def _applicant_context(db, user_id):
-    """Assemble the real applicant data used to fill a web application form for
-    Pro auto-submit: a candidate dict (name/email/phone) and, when the user has
-    real resume entries, a generated .docx resume file to upload. Returns
-    (candidate, resume_path_or_None). resume_path, if returned, is a temp file
-    the caller must delete. Never invents data - missing fields stay empty, and
-    the submitter safely hands off any form that needs what we don't have."""
-    import os as _os
-    import tempfile
-    from app.models.db_models import Profile, ResumeEntry, User
+def _candidate_dict(db, user_id):
+    """The real applicant identity (name/email/phone) used to fill an application
+    form, drawn from the user's account + current profile. Never invents data -
+    a missing field stays empty, and the form filler (server-side submitter or the
+    browser extension) safely hands off any form that needs what we don't have."""
+    from app.models.db_models import Profile, User
     user = db.query(User).filter(User.id == user_id).first()
     profile = (
         db.query(Profile)
@@ -46,9 +42,14 @@ def _applicant_context(db, user_id):
     if full_name:
         parts = full_name.split()
         first, last = parts[0], (parts[-1] if len(parts) > 1 else "")
-    candidate = {"full_name": full_name, "first_name": first, "last_name": last, "email": email, "phone": phone}
+    return {"full_name": full_name, "first_name": first, "last_name": last, "email": email, "phone": phone}
  
-    resume_path = None
+ 
+def _build_resume_docx(db, user_id):
+    """Generate a real .docx resume from the user's resume entries, or None if
+    they have none (or generation fails). Same content the in-app resume download
+    produces - never fabricates entries."""
+    from app.models.db_models import Profile, ResumeEntry, User
     try:
         entries = (
             db.query(ResumeEntry)
@@ -56,23 +57,204 @@ def _applicant_context(db, user_id):
             .order_by(ResumeEntry.display_order.asc())
             .all()
         )
-        if entries:
-            from app.services.resume_docx import generate_resume_document
-            polished = [{
-                "title": e.title or "",
-                "org": e.org or "",
-                "dates": " - ".join(x for x in [e.start_date, e.end_date] if x),
-                "bullets": [e.raw_description] if e.raw_description else [],
-            } for e in entries]
-            skills = [s.strip() for s in ((profile.skills if profile else "") or "").replace(",", " ").split() if s.strip()]
-            data = generate_resume_document(email, None, polished, skills)
-            fd, resume_path = tempfile.mkstemp(suffix=".docx")
-            with _os.fdopen(fd, "wb") as fh:
-                fh.write(data)
+        if not entries:
+            return None
+        user = db.query(User).filter(User.id == user_id).first()
+        profile = (
+            db.query(Profile)
+            .filter(Profile.user_id == user_id, Profile.is_current == True)  # noqa: E712
+            .first()
+        )
+        email = (user.email if user else "") or ""
+        from app.services.resume_docx import generate_resume_document
+        polished = [{
+            "title": e.title or "",
+            "org": e.org or "",
+            "dates": " - ".join(x for x in [e.start_date, e.end_date] if x),
+            "bullets": [e.raw_description] if e.raw_description else [],
+        } for e in entries]
+        skills = [s.strip() for s in ((profile.skills if profile else "") or "").replace(",", " ").split() if s.strip()]
+        return generate_resume_document(email, None, polished, skills)
     except Exception as e:
-        _log.warning("Could not build a resume file for auto-submit - %s", e)
-        resume_path = None
+        _log.warning("Could not build a resume file - %s", e)
+        return None
+ 
+ 
+def _applicant_context(db, user_id):
+    """Assemble the real applicant data used to fill a web application form for
+    server-side Pro auto-submit: a candidate dict (name/email/phone) and, when the
+    user has real resume entries, a generated .docx resume file to upload. Returns
+    (candidate, resume_path_or_None). resume_path, if returned, is a temp file the
+    caller must delete."""
+    import os as _os
+    import tempfile
+    candidate = _candidate_dict(db, user_id)
+    resume_path = None
+    data = _build_resume_docx(db, user_id)
+    if data:
+        fd, resume_path = tempfile.mkstemp(suffix=".docx")
+        with _os.fdopen(fd, "wb") as fh:
+            fh.write(data)
     return candidate, resume_path
+ 
+ 
+def _require_autosubmit_access(db, app_record):
+    """The one real gate shared by every auto-submit delivery channel (server-side
+    Playwright AND the browser extension): the user must be on a tier that includes
+    `auto_submit` (Pro/Max) AND have granted explicit, revocable consent to let
+    Kaidostar submit applications on their behalf. Enforced on the server so a
+    modified extension or a direct API call can't bypass it. Raises 403 otherwise."""
+    from app.services.tiers import tier_has_feature, get_user_tier
+    from app.models.db_models import Profile
+    if not tier_has_feature(get_user_tier(db, str(app_record.user_id)), "auto_submit"):
+        raise HTTPException(status_code=403, detail="Automatic application submission is a Pro feature. Upgrade to unlock it.")
+    profile = (
+        db.query(Profile)
+        .filter(Profile.user_id == app_record.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not (profile and getattr(profile, "auto_submit_consent", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="Grant Kaidostar permission to submit applications on your behalf before using auto-fill.",
+        )
+ 
+ 
+def deliver_accepted_application(db, app_record, listing, client=None):
+    """The single REAL delivery path for an accepted application, shared by the
+    manual /send route AND the scheduler's unattended auto-send, so both deliver
+    identically and NEITHER ever marks an application 'sent' without a real send.
+ 
+    Metis picks the most effective real channel for the listing:
+      - email: sends a real email to a best-effort general company address; on
+        success -> sent(email); on failure -> honest web hand-off (ready_to_submit).
+      - web: Pro + consent gets a real, safety-first browser auto-submission
+        (sent(web_auto) ONLY on a confirmed submission); everyone else, and any form
+        that can't be auto-completed safely, gets the honest hand-off
+        (ready_to_submit) with the real reason.
+ 
+    Mutates app_record and commits, and returns the same result dict the route
+    returns. Meters the paid Metis call and the auto-submit so the scheduler's bulk
+    path is bounded exactly like the manual one. Never raises for a delivery outcome
+    - a blocker or failure becomes a hand-off, not an exception."""
+    from app.services.tiers import tier_has_feature, get_user_tier
+    from app.services.email_send import send_email
+    from app.models.db_models import Profile as Profile_
+    from app.services.application_submit import submit_application_via_browser
+ 
+    # This function owns the paid work (the Metis channel call, the auto-submit) AND
+    # its metering, so callers just hand it the application - they don't fetch a
+    # client or meter themselves. Fetch the AI client here when one wasn't supplied.
+    if client is None:
+        client = get_client()
+ 
+    # Meter the paid Metis channel decision (fails open); mirrors the manual route.
+    rate_limit_by_tier(db, str(app_record.user_id), "application-send", per_action_limit=200)
+ 
+    listing_dict = {
+        "title": listing.title, "org": listing.org, "type": listing.type,
+        "description": listing.description, "apply_url": listing.apply_url,
+    }
+    plan = {"channel": "web", "to_address": None, "subject": "", "reasoning": ""}
+    if client is not None:
+        try:
+            plan = decide_application_delivery(client, listing_dict)
+        except Exception as e:
+            _log.warning("Delivery-channel decision failed, defaulting to web hand-off - %s", e)
+ 
+    def _web_handoff(reasoning, email_error=False, pro_only=False, auto_note=None, consent_needed=False, possibly_submitted=False):
+        app_record.status = "ready_to_submit"
+        app_record.sent_channel = "web"
+        db.commit()
+        out = {
+            "status": "ready_to_submit", "channel": "web",
+            "apply_url": listing.apply_url, "draft_content": app_record.draft_content,
+            "reasoning": reasoning,
+        }
+        if email_error:
+            out["email_error"] = True
+        if pro_only:
+            out["auto_submit_pro_only"] = True
+        if consent_needed:
+            out["auto_submit_consent_needed"] = True
+        if auto_note:
+            out["auto_submit_note"] = auto_note
+        if possibly_submitted:
+            out["auto_submit_possibly_sent"] = True
+        return out
+ 
+    if plan.get("channel") == "email" and plan.get("to_address"):
+        subject = plan.get("subject") or f"Application: {listing.title} at {listing.org}"
+        body = (app_record.draft_content or "").strip() or "Please find my application below."
+        try:
+            send_email(plan["to_address"], subject, body)
+        except Exception as e:
+            _log.warning("Application email send failed, falling back to web hand-off - %s", e)
+            return _web_handoff(
+                "Couldn't send the email just now, so here's the finished application to submit at the posting directly.",
+                email_error=True,
+            )
+        app_record.status = "sent"
+        app_record.sent_at = utcnow()
+        app_record.sent_channel = "email"
+        app_record.sent_to_address = plan["to_address"]
+        db.commit()
+        return {
+            "status": "sent", "channel": "email",
+            "sent_at": app_record.sent_at.isoformat(),
+            "to_address": plan["to_address"], "address_is_guess": True,
+            "reasoning": plan.get("reasoning", ""),
+        }
+ 
+    # Web channel: Pro members get a real best-effort browser auto-submission first;
+    # free members (and any form that can't be auto-completed safely) get the hand-off.
+    reasoning = plan.get("reasoning", "")
+    if not tier_has_feature(get_user_tier(db, str(app_record.user_id)), "auto_submit"):
+        return _web_handoff(reasoning, pro_only=True)
+    _profile = (
+        db.query(Profile_)
+        .filter(Profile_.user_id == app_record.user_id, Profile_.is_current == True)  # noqa: E712
+        .first()
+    )
+    if not (_profile and getattr(_profile, "auto_submit_consent", False)):
+        return _web_handoff(reasoning, consent_needed=True,
+                            auto_note="Give Kaidostar permission to submit applications for you to turn on automatic submission.")
+    rate_limit_by_tier(db, str(app_record.user_id), "application-autosubmit", per_action_limit=40)
+    candidate, resume_path = _applicant_context(db, app_record.user_id)
+    try:
+        result = submit_application_via_browser(
+            listing.apply_url, candidate,
+            resume_path=resume_path, cover_letter=app_record.draft_content,
+        )
+    except Exception as e:
+        _log.warning("Auto-submit crashed, handing off - %s", e)
+        result = {"status": "error", "reason": str(e)}
+    finally:
+        if resume_path:
+            try:
+                os.remove(resume_path)
+            except Exception:
+                pass
+ 
+    if result.get("status") == "submitted":
+        app_record.status = "sent"
+        app_record.sent_at = utcnow()
+        app_record.sent_channel = "web_auto"
+        db.commit()
+        return {
+            "status": "sent", "channel": "web_auto",
+            "sent_at": app_record.sent_at.isoformat(),
+            "apply_url": listing.apply_url,
+            "reasoning": reasoning,
+            "auto_submit_note": result.get("reason", ""),
+        }
+    return _web_handoff(
+        reasoning,
+        auto_note=result.get("reason", ""),
+        possibly_submitted=bool(result.get("submitted_unconfirmed")),
+    )
+ 
+ 
 router = APIRouter(prefix="/applications", tags=["applications"])
  
  
@@ -326,8 +508,7 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
     named person - only a general, best-effort company address, and only when
     Metis judges a direct email genuinely more effective than the real posting.
     """
-    from app.models.db_models import Listing, Profile as Profile_
-    from app.services.email_send import send_email
+    from app.models.db_models import Listing
     import uuid as uuid_module
     try:
         uuid_module.UUID(application_id)
@@ -352,133 +533,14 @@ def send_application(application_id: str, db: Session = Depends(get_db), authori
             remaining = (_sendable_at - utcnow()).seconds // 60
             raise HTTPException(status_code=400, detail=f"Still in undo window - {remaining} minutes left")
  
-    # Meter this: send now makes a paid AI call (Metis' channel decision), so an
-    # unmetered send would let one token run up an unbounded bill. Matches the
-    # sibling draft/accept caps. Fails open (see rate_limit_by_tier).
-    rate_limit_by_tier(db, str(app_record.user_id), "application-send", per_action_limit=200)
- 
     listing = db.query(Listing).filter(Listing.id == app_record.listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-    listing_dict = {
-        "title": listing.title, "org": listing.org, "type": listing.type,
-        "description": listing.description, "apply_url": listing.apply_url,
-    }
  
-    # Metis decides the most effective real channel. Any failure degrades
-    # safely to the honest default - hand the finished application to the user
-    # to submit at the real posting - rather than a fabricated or blocked send.
-    client = get_client()
-    plan = {"channel": "web", "to_address": None, "subject": "", "reasoning": ""}
-    if client is not None:
-        try:
-            plan = decide_application_delivery(client, listing_dict)
-        except Exception as e:
-            _log.warning("Delivery-channel decision failed, defaulting to web hand-off - %s", e)
- 
-    def _web_handoff(reasoning: str, email_error: bool = False, pro_only: bool = False, auto_note: str = None, consent_needed: bool = False):
-        # The real route is the posting's own form. When it can't be auto-submitted
-        # (free tier, no consent, a blocker, or a field we can't safely fill), hand
-        # back the finished application + the direct link for the user to submit.
-        app_record.status = "ready_to_submit"
-        app_record.sent_channel = "web"
-        db.commit()
-        out = {
-            "status": "ready_to_submit", "channel": "web",
-            "apply_url": listing.apply_url, "draft_content": app_record.draft_content,
-            "reasoning": reasoning,
-        }
-        if email_error:
-            out["email_error"] = True
-        if pro_only:
-            out["auto_submit_pro_only"] = True
-        if consent_needed:
-            out["auto_submit_consent_needed"] = True
-        if auto_note:
-            out["auto_submit_note"] = auto_note
-        return out
- 
-    if plan.get("channel") == "email" and plan.get("to_address"):
-        subject = plan.get("subject") or f"Application: {listing.title} at {listing.org}"
-        body = (app_record.draft_content or "").strip() or "Please find my application below."
-        try:
-            send_email(plan["to_address"], subject, body)
-        except Exception as e:
-            # Real send failed (e.g. Resend not configured). Do NOT mark it
-            # sent - fall back to the honest web hand-off so the accepted
-            # application is never silently lost or falsely reported as sent.
-            _log.warning("Application email send failed, falling back to web hand-off - %s", e)
-            return _web_handoff(
-                "Couldn't send the email just now, so here's the finished application to submit at the posting directly.",
-                email_error=True,
-            )
-        app_record.status = "sent"
-        app_record.sent_at = utcnow()
-        app_record.sent_channel = "email"
-        app_record.sent_to_address = plan["to_address"]
-        db.commit()
-        return {
-            "status": "sent", "channel": "email",
-            "sent_at": app_record.sent_at.isoformat(),
-            "to_address": plan["to_address"], "address_is_guess": True,
-            "reasoning": plan.get("reasoning", ""),
-        }
- 
-    # Web channel: the real route is the posting's own form. Pro members get a
-    # real best-effort browser auto-submission first; free members (and any form
-    # that can't be auto-completed safely) get the honest hand-off.
-    from app.services.tiers import tier_has_feature, get_user_tier
-    reasoning = plan.get("reasoning", "")
-    if not tier_has_feature(get_user_tier(db, str(app_record.user_id)), "auto_submit"):
-        return _web_handoff(reasoning, pro_only=True)
- 
-    # Explicit, revocable permission is required before Kaidostar uses the user's
-    # personal details to submit an application to an employer on their behalf.
-    _profile = (
-        db.query(Profile_)
-        .filter(Profile_.user_id == app_record.user_id, Profile_.is_current == True)  # noqa: E712
-        .first()
-    )
-    if not (_profile and getattr(_profile, "auto_submit_consent", False)):
-        return _web_handoff(reasoning, consent_needed=True,
-                            auto_note="Give Kaidostar permission to submit applications for you to turn on automatic submission.")
- 
-    # Pro/Max + consent: meter, then attempt the real submission. The submitter is
-    # safety-first - it aborts on logins/CAPTCHAs or any required field it can't
-    # fill, and only reports success on a real confirmation - so this never
-    # submits a garbled application, and falls back to the hand-off otherwise.
-    rate_limit_by_tier(db, str(app_record.user_id), "application-autosubmit", per_action_limit=40)
-    from app.services.application_submit import submit_application_via_browser
-    candidate, resume_path = _applicant_context(db, app_record.user_id)
-    try:
-        result = submit_application_via_browser(
-            listing.apply_url, candidate,
-            resume_path=resume_path, cover_letter=app_record.draft_content,
-        )
-    except Exception as e:
-        _log.warning("Auto-submit crashed, handing off - %s", e)
-        result = {"status": "error", "reason": str(e)}
-    finally:
-        if resume_path:
-            try:
-                os.remove(resume_path)
-            except Exception:
-                pass
- 
-    if result.get("status") == "submitted":
-        app_record.status = "sent"
-        app_record.sent_at = utcnow()
-        app_record.sent_channel = "web_auto"
-        db.commit()
-        return {
-            "status": "sent", "channel": "web_auto",
-            "sent_at": app_record.sent_at.isoformat(),
-            "apply_url": listing.apply_url,
-            "reasoning": reasoning,
-            "auto_submit_note": result.get("reason", ""),
-        }
-    # Couldn't auto-complete it safely - honest hand-off with the real reason.
-    return _web_handoff(reasoning, auto_note=result.get("reason", ""))
+    # The real, shared delivery path (also used by the scheduler's auto-send). It
+    # fetches the AI client, meters the paid Metis call, picks the channel, actually
+    # sends or hands off, and never marks 'sent' without a real send.
+    return deliver_accepted_application(db, app_record, listing)
  
  
 @router.post("/{application_id}/mark-submitted")
@@ -506,6 +568,121 @@ def mark_application_submitted(application_id: str, db: Session = Depends(get_db
         app_record.sent_channel = "web"
     db.commit()
     return {"status": "sent", "sent_at": app_record.sent_at.isoformat(), "channel": app_record.sent_channel}
+ 
+ 
+@router.get("/{application_id}/autofill")
+def application_autofill_data(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
+    """The data the Kaidostar browser extension needs to fill THIS application's
+    form in the user's own browser - their real logged-in session and residential
+    IP, which is what actually reaches login-gated ATSes and avoids the bot-block a
+    server-side headless browser trips. Returns first/last/full name, email, phone,
+    the cover-letter text, the posting's apply URL, and whether a real résumé file
+    is available (fetched separately from /resume-file).
+ 
+    Gated by the SAME real gate as server-side auto-submit - Pro tier AND explicit
+    auto-submit consent (_require_autosubmit_access). The extension is just another
+    delivery channel for the auto_submit feature, so the gate is enforced here on
+    the server: a modified client cannot bypass it. This makes no AI call and starts
+    no server-side browser (the fill runs client-side, at no per-call server cost),
+    so it is deliberately not metered against the auto-submit cap - the Pro+consent
+    gate is the control. Never invents applicant data; empty fields stay empty and
+    the extension's safety guards hand off any form it can't fill honestly.
+    """
+    from app.models.db_models import Listing, ResumeEntry
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
+    _require_autosubmit_access(db, app_record)
+ 
+    listing = db.query(Listing).filter(Listing.id == app_record.listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+ 
+    candidate = _candidate_dict(db, app_record.user_id)
+    has_resume = (
+        db.query(ResumeEntry).filter(ResumeEntry.user_id == app_record.user_id).first() is not None
+    )
+    return {
+        "application_id": str(app_record.id),
+        "first_name": candidate["first_name"],
+        "last_name": candidate["last_name"],
+        "full_name": candidate["full_name"],
+        "email": candidate["email"],
+        "phone": candidate["phone"],
+        "cover_letter": app_record.draft_content or "",
+        "apply_url": listing.apply_url,
+        "listing_title": listing.title,
+        "listing_org": listing.org,
+        "resume_available": has_resume,
+        "resume_url": f"/applications/{app_record.id}/resume-file" if has_resume else None,
+    }
+ 
+ 
+@router.get("/{application_id}/resume-file")
+def application_resume_file(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
+    """The user's real résumé as a .docx, for the extension to attach to a form's
+    file input in the user's browser. Same Pro+consent gate as /autofill. Returns
+    404 when the user has no résumé entries - the form's résumé field, if required,
+    then safely blocks the extension's auto-submit rather than sending without one.
+    """
+    from fastapi import Response
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
+    _require_autosubmit_access(db, app_record)
+ 
+    data = _build_resume_docx(db, app_record.user_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="No résumé on file to attach")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename=resume.docx"},
+    )
+ 
+ 
+@router.post("/{application_id}/confirm-autofill-submit")
+def confirm_autofill_submit(application_id: str, db: Session = Depends(get_db), authorization: str = Header(None)):
+    """The extension calls this ONLY after it has verified a real submission
+    happened in the browser (a genuine post-submit change - URL moved to a
+    confirmation page or a confirmation message newly appeared - via
+    KaidostarFill.looksConfirmed). Flips the application to sent with channel
+    'web_ext', so the record honestly reflects a submission the extension actually
+    observed. If the extension can't confirm, it does NOT call this - the app stays
+    ready_to_submit and the user is shown the filled form to finish. Valid from
+    approved/ready_to_submit only, so it can never fabricate a 'sent' out of thin
+    air for an application that was never accepted."""
+    import uuid as uuid_module
+    try:
+        uuid_module.UUID(application_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app_record = db.query(Application).filter(Application.id == application_id).first()
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    verify_token_belongs_to_user(str(app_record.user_id), authorization)
+    # The Pro+consent gate still applies: confirming an extension submission is
+    # part of the same paid, consented feature.
+    _require_autosubmit_access(db, app_record)
+    if app_record.status not in ("ready_to_submit", "approved"):
+        raise HTTPException(status_code=400, detail="Application is not ready to submit")
+    app_record.status = "sent"
+    app_record.sent_at = utcnow()
+    app_record.sent_channel = "web_ext"
+    db.commit()
+    return {"status": "sent", "sent_at": app_record.sent_at.isoformat(), "channel": "web_ext"}
  
  
 @router.post("/{application_id}/undo")
