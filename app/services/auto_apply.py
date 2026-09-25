@@ -545,7 +545,23 @@ def draft_outreach_for_match(db, anthropic_client, user_id: str, listing_id: str
         auto_generated=auto_generated,
     )
     db.add(draft)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent draft for the same (user, listing): the
+        # uq_outreach_user_listing constraint rejected the duplicate. Return the row
+        # that won, matching the "already_existed" check above - so a scan-vs-manual
+        # race or a double-click can't create two drafts (which the user could then
+        # send to the same contact twice) instead of resolving cleanly.
+        db.rollback()
+        existing = (
+            db.query(OutreachEmail)
+            .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+            .first()
+        )
+        if existing:
+            return {"outreach_id": str(existing.id), "status": existing.status, "already_existed": True}
+        raise
     db.refresh(draft)
  
     return {
@@ -680,7 +696,21 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         leadership_research_sources=leadership_research.get("sources") or [],
     )
     db.add(draft)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race for this (user, listing) - the uq_outreach_user_listing
+        # constraint rejected the duplicate. Return the winning row (already_existed),
+        # same as draft_outreach_for_match, so a concurrent draft can't duplicate.
+        db.rollback()
+        existing = (
+            db.query(OutreachEmail)
+            .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+            .first()
+        )
+        if existing:
+            return {"outreach_id": str(existing.id), "status": existing.status, "already_existed": True}
+        raise
     db.refresh(draft)
  
     return {
@@ -692,3 +722,4 @@ def draft_leadership_grounded_outreach(db, anthropic_client, user_id: str, listi
         "leadership_grounded": grounded,
         "leaders": [l.get("name") for l in leaders],
     }
+ 
