@@ -57,6 +57,19 @@ class SurveyIn(BaseModel):
             raise ValueError("target_types cannot be empty - a profile with no target types would never match any listing at all")
         return v
  
+    @field_validator("priorities", "target_types")
+    @classmethod
+    def _list_items_bounded(cls, v: list[str]) -> list[str]:
+        # Field(max_length=50) bounds the LIST length but NOT each element's size,
+        # so without this a caller could POST 50 multi-megabyte strings inside these
+        # arrays (they're stored in ARRAY(String) and feed matching) - an unbounded
+        # storage/AI-cost vector. These hold short labels, so cap each element.
+        if v:
+            for item in v:
+                if item is not None and len(str(item)) > 200:
+                    raise ValueError("each entry must be at most 200 characters")
+        return v
+ 
     @field_validator("sport")
     @classmethod
     def sport_required_if_athlete(cls, v: str | None, info) -> str | None:
@@ -159,6 +172,26 @@ def create_profile(payload: SurveyIn, db: Session = Depends(get_db), authorizati
         interests=payload.interests,
         student_achievements=payload.student_achievements,
     )
+ 
+    # Carry forward settings that live on the Profile row but are NOT part of the
+    # survey payload, so editing the survey doesn't silently reset them on the new
+    # current snapshot. Auto-apply on/off + threshold are set via
+    # /auto-apply-settings, and notification preferences via
+    # /notifications/preferences - none of them are re-sent by the survey, so
+    # without this a user who turned auto-apply on (or muted a notification) would
+    # have it revert to the default the next time they edited any survey field.
+    # (full_name / phone / auto_submit_consent ARE sent by the survey, so the
+    # payload stays authoritative for those.)
+    _prev = (
+        db.query(Profile)
+        .filter(Profile.user_id == payload.user_id, Profile.is_current == True)  # noqa: E712
+        .first()
+    )
+    if _prev is not None:
+        profile_fields["auto_apply_enabled"] = _prev.auto_apply_enabled
+        profile_fields["auto_apply_threshold"] = _prev.auto_apply_threshold
+        if getattr(_prev, "notification_preferences", None) is not None:
+            profile_fields["notification_preferences"] = _prev.notification_preferences
  
     # Demote the old current snapshot and insert the new one as current. The whole
     # app assumes AT MOST ONE current profile per user - roughly thirty
