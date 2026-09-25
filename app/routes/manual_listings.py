@@ -12,8 +12,9 @@ import hashlib
  
 from fastapi import APIRouter, HTTPException, Depends
 from app.services.auth import require_valid_token
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from datetime import date
  
 from app.db import get_db
@@ -34,6 +35,18 @@ class ManualListingIn(BaseModel):
     # is stored raw - an unbounded value was an unbounded-storage vector. 2000 matches
     # the other URL fields (video_url).
     apply_url: str = Field(max_length=2000)
+ 
+    @field_validator("tags")
+    @classmethod
+    def _tags_items_bounded(cls, v: list[str]) -> list[str]:
+        # max_length=50 bounds the tag COUNT but not each tag's size; cap each so a
+        # caller can't POST giant strings inside the list (unbounded-storage vector,
+        # the same one apply_url was hardened against above). Tags are short labels.
+        if v:
+            for item in v:
+                if item is not None and len(str(item)) > 200:
+                    raise ValueError("each tag must be at most 200 characters")
+        return v
  
  
 @router.post("")
@@ -59,7 +72,22 @@ def add_manual_listing(payload: ManualListingIn, db: Session = Depends(get_db), 
         apply_url=payload.apply_url,
     )
     db.add(listing)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Re-adding the same posting (same apply_url -> same source+external_id) hits
+        # the UNIQUE(source, external_id) constraint. That's a duplicate add (a
+        # re-submit or double-click), not an error: roll back and return the existing
+        # listing idempotently instead of a raw 500.
+        db.rollback()
+        existing = (
+            db.query(Listing)
+            .filter(Listing.source == "manual", Listing.external_id == external_id)
+            .first()
+        )
+        if existing:
+            return {"status": "already_exists", "listing_id": str(existing.id)}
+        raise
     db.refresh(listing)
     return {"status": "added", "listing_id": str(listing.id)}
  
