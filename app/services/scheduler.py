@@ -657,43 +657,80 @@ def run_scan_for_all_users():
         # per application. Isolated in its own try/except so a real
         # failure here can never retroactively undo the scan above.
         try:
-            from app.models.db_models import Application
+            from app.models.db_models import Application, Listing
+            # Deliver via the SAME real path as the manual /send route. Previously
+            # this loop just flipped status to "sent" in bulk WITHOUT delivering
+            # anything - no email, no submission - fabricating a "sent" for
+            # applications that were never actually sent to any employer. That
+            # violated the whole delivery system's honesty guarantee. Now each due
+            # application goes through deliver_accepted_application: Metis picks the
+            # channel and either really emails it or auto-submits/hands it off, and
+            # it is marked "sent" ONLY on a real send (email or a confirmed web
+            # auto-submit). Web hand-offs become ready_to_submit for the user.
+            from app.routes.applications import deliver_accepted_application
             now = utcnow()
             due_to_send = (
                 db.query(Application)
                 .filter(Application.status == "approved", Application.sendable_at.isnot(None), Application.sendable_at <= now)
                 .all()
             )
-            sent_count = 0
             sent_counts_by_user = {}
+            handoff_counts_by_user = {}
             for app_record in due_to_send:
-                app_record.status = "sent"
-                app_record.sent_at = now
-                sent_count += 1
-                sent_counts_by_user[app_record.user_id] = sent_counts_by_user.get(app_record.user_id, 0) + 1
-            if sent_count > 0:
-                # A notification is inherently per-user - sent_count
-                # itself is a global total across this bulk query, so
-                # grouping by each application's real, individual
-                # owner and notifying each affected user with their
-                # own genuine count is the only correct approach here.
+                # Per-application isolation: one failed delivery must not abort the
+                # rest of the batch (matches this file's design elsewhere).
+                try:
+                    # Re-read the current status before delivering. Between the bulk
+                    # query above and here, the user may have sent this application
+                    # manually (or undone it) in another request; the app_record we
+                    # hold would still say "approved". Delivering on that stale value
+                    # would send the SAME application twice - a real double
+                    # application to the employer. Refresh and skip unless it's still
+                    # an un-handled approved application.
+                    db.refresh(app_record)
+                    if app_record.status != "approved":
+                        continue
+                    listing = db.query(Listing).filter(Listing.id == app_record.listing_id).first()
+                    if not listing:
+                        continue
+                    res = deliver_accepted_application(db, app_record, listing, anthropic_client)
+                    uid = app_record.user_id
+                    if res.get("status") == "sent":
+                        sent_counts_by_user[uid] = sent_counts_by_user.get(uid, 0) + 1
+                    elif res.get("status") == "ready_to_submit":
+                        handoff_counts_by_user[uid] = handoff_counts_by_user.get(uid, 0) + 1
+                except Exception as _send_err:
+                    db.rollback()
+                    print(f"    Auto-send skipped for application {getattr(app_record, 'id', '?')}: {_send_err}")
+            sent_count = sum(sent_counts_by_user.values())
+            if sent_counts_by_user or handoff_counts_by_user:
+                # Notify each affected user with their own genuine counts: what was
+                # actually sent, and what is now waiting for them to submit (honest -
+                # a web hand-off is NOT a send). Respect the auto_apply mute.
                 from app.models.db_models import Profile
-                affected_user_ids = list(sent_counts_by_user.keys())
-                profiles = db.query(Profile).filter(Profile.user_id.in_(affected_user_ids), Profile.is_current == True).all()  # noqa: E712
+                affected = set(sent_counts_by_user) | set(handoff_counts_by_user)
+                profiles = db.query(Profile).filter(Profile.user_id.in_(list(affected)), Profile.is_current == True).all()  # noqa: E712
                 prefs_by_user = {p.user_id: (p.notification_preferences or {}) for p in profiles}
-                for uid, count in sent_counts_by_user.items():
+                for uid in affected:
                     if prefs_by_user.get(uid, {}).get("auto_apply", True) is False:
                         continue
-                    db.add(Notification(
-                        user_id=uid, type="auto_apply",
-                        title=f"Auto-send: {count} approved application{'s' if count != 1 else ''} past your undo window, now sent",
-                    ))
+                    sc = sent_counts_by_user.get(uid, 0)
+                    hc = handoff_counts_by_user.get(uid, 0)
+                    if sc > 0:
+                        db.add(Notification(
+                            user_id=uid, type="auto_apply",
+                            title=f"Auto-send: {sc} approved application{'s' if sc != 1 else ''} past your undo window, now sent",
+                        ))
+                    if hc > 0:
+                        db.add(Notification(
+                            user_id=uid, type="auto_apply",
+                            title=f"{hc} application{'s' if hc != 1 else ''} ready for you to submit",
+                            detail="These couldn't be sent automatically (the posting needs you to submit it). Open the Workshop to finish them.",
+                        ))
                 db.commit()
-                print(f"Auto-send: {sent_count} approved application(s) past their undo window, now genuinely sent.")
+                print(f"Auto-send: {sent_count} application(s) genuinely sent; {sum(handoff_counts_by_user.values())} handed off for manual submission.")
         except Exception as e:
-            # Roll back the uncommitted status mutations so the session is clean
-            # (belt-and-suspenders: this is the last block, and the finally closes
-            # the session anyway, but keeps the pattern consistent).
+            # Roll back so the session is clean for the finally that closes it.
             db.rollback()
             print(f"Auto-send failed (non-fatal): {e}")
     except Exception as e:
