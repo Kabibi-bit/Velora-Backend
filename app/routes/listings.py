@@ -451,6 +451,18 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
     except ValueError:
         raise HTTPException(status_code=404, detail="Listing not found")
  
+    # Outreach is a Pro+ feature and every OTHER path that touches it enforces
+    # that: outreach.py's draft endpoints call require_feature("outreach_drafting"),
+    # and the sibling get_connection_strategy in THIS file gates + meters the same
+    # way. This endpoint - which does the most sensitive thing of all, sending a
+    # REAL email via Resend to a caller-supplied arbitrary address - was the lone
+    # one enforcing neither, so a Free user (or any token) could send arbitrary,
+    # unmetered real email through the app's own verified sending domain, bypassing
+    # both the tier gate and every send cap the rest of the feature has. Gate and
+    # meter it identically to its sibling so the enforcement is real, not cosmetic.
+    require_feature(db, user_id, "outreach_drafting")
+    rate_limit_by_tier(db, user_id, "outreach-draft", per_action_limit=200)
+ 
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
