@@ -46,8 +46,11 @@ def content_coach(payload: ContentPlanIn, db: Session = Depends(get_db), _auth: 
     data has stayed frontend-only so far, an honest gap rather than
     something silently assumed to exist.
     """
-    if payload.user_id:
-        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=300)
+    # Meter against the CALLER'S OWN token subject, always - never a body user_id.
+    # require_valid_token doesn't tie the token to a body user_id, so metering only
+    # `if payload.user_id` let a caller bypass the cap by omitting the field, or
+    # charge this paid AI call against another user by passing their id.
+    rate_limit_by_tier(db, _auth["sub"], "athlete-content", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -82,8 +85,11 @@ def research_program(payload: ProgramResearchIn, db: Session = Depends(get_db), 
     about a specific named program, rather than general knowledge.
     Reports plainly when search doesn't turn up anything specific.
     """
-    if payload.user_id:
-        rate_limit_by_tier(db, payload.user_id, "company-research", per_action_limit=300)
+    # Meter against the caller's OWN token subject, always (see content_coach): a
+    # body user_id under require_valid_token could bypass the cap by omission or bill
+    # this paid web-search call to another user. Especially important here - this is
+    # the real Anthropic web-search tool, the costliest call in the file.
+    rate_limit_by_tier(db, _auth["sub"], "company-research", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -387,8 +393,10 @@ def edit_plan(payload: ClipEditPlanIn, db: Session = Depends(get_db), _auth: dic
     grounded in the athlete's own description of their footage, for
     them to execute in whatever editor they already use.
     """
-    if payload.user_id:
-        rate_limit_by_tier(db, payload.user_id, "athlete-content", per_action_limit=300)
+    # Meter against the caller's OWN token subject, always (see content_coach): a
+    # body user_id under require_valid_token could bypass the cap by omission or bill
+    # this paid AI call to another user.
+    rate_limit_by_tier(db, _auth["sub"], "athlete-content", per_action_limit=300)
     if not payload.sport.strip():
         raise HTTPException(status_code=400, detail="sport is required")
     if not payload.level.strip():
@@ -572,14 +580,16 @@ def detect_highlights(payload: DetectHighlightsIn, db: Session = Depends(get_db)
     clip-planning workshop. Every returned moment is a real detection with a
     real timestamp; nothing is invented.
     """
-    if payload.user_id:
-        # Meter under the dedicated "highlight-detection" key, not "athlete-content".
-        # FEATURE_DAILY_CAPS caps highlight-detection deliberately low (free 2, pro 15,
-        # max 100) because the Roboflow CV inference is genuinely expensive; billing it
-        # to the athlete-content bucket (free 8, pro 60) ran it at ~4x the intended free
-        # limit AND made the two features drain each other's quota. Its own low cap was
-        # otherwise never applied.
-        rate_limit_by_tier(db, payload.user_id, "highlight-detection", per_action_limit=100)
+    # Meter under the dedicated "highlight-detection" key, keyed to the CALLER'S OWN
+    # token subject - never a body-supplied user_id. Previously this metered against
+    # payload.user_id and ONLY when it was present, which was doubly exploitable
+    # under require_valid_token (which doesn't tie the token to a body user_id): a
+    # caller could bypass the cap entirely just by OMITTING user_id, or charge the
+    # expensive Roboflow CV inference against another user by passing their id.
+    # FEATURE_DAILY_CAPS caps this low (free 2, pro 15, max 100) precisely because
+    # the CV inference is genuinely expensive, so the cap must always apply to the
+    # real caller.
+    rate_limit_by_tier(db, _auth["sub"], "highlight-detection", per_action_limit=100)
     if not payload.video_url.strip():
         raise HTTPException(status_code=400, detail="video_url is required")
     try:
