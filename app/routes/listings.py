@@ -5,6 +5,7 @@ from app.services.ai_client import get_client
 from app.services.tiers import require_feature
 from app.services.rate_limit import rate_limit_by_tier
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field
  
 from app.db import get_db
@@ -462,17 +463,46 @@ def send_outreach_email(user_id: str, listing_id: str, payload: SendOutreachIn, 
         status = "failed"
         error_detail = str(e)
  
-    log = OutreachEmail(
-        user_id=user_id,
-        listing_id=listing_id,
-        to_address=payload.to_address,
-        address_verified=payload.address_verified,
-        subject=payload.subject,
-        body=payload.body,
-        status=status,
+    # One outreach row per (user, listing): the rest of the codebase reads outreach
+    # with .filter(user_id, listing_id).first() and OutreachEmail carries
+    # UNIQUE(user_id, listing_id). So record this send by UPDATING an existing row
+    # for this listing (e.g. a prior draft) if there is one, else inserting. A bare
+    # insert would both violate the constraint (500, after the email already sent)
+    # and leave two rows that every .first()-based read would then pick between
+    # arbitrarily.
+    def _apply(row):
+        row.to_address = payload.to_address
+        row.address_verified = payload.address_verified
+        row.subject = payload.subject
+        row.body = payload.body
+        row.status = status
+ 
+    log = (
+        db.query(OutreachEmail)
+        .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+        .first()
     )
-    db.add(log)
-    db.commit()
+    if log:
+        _apply(log)
+        db.commit()
+    else:
+        log = OutreachEmail(user_id=user_id, listing_id=listing_id)
+        _apply(log)
+        db.add(log)
+        try:
+            db.commit()
+        except IntegrityError:
+            # A concurrent send/draft won the (user, listing) slot - update it instead.
+            db.rollback()
+            log = (
+                db.query(OutreachEmail)
+                .filter(OutreachEmail.user_id == user_id, OutreachEmail.listing_id == listing_id)
+                .first()
+            )
+            if not log:
+                raise
+            _apply(log)
+            db.commit()
  
     if status == "failed":
         # error_detail is the raw send-provider exception (str(e)); log it
