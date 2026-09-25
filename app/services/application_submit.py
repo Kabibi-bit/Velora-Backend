@@ -86,28 +86,42 @@ def check_browser_available() -> dict:
                 "fix": "run `playwright install --with-deps chromium` in the deploy (or use the Dockerfile)"}
  
  
-def _fill_first(page, selectors, value) -> bool:
+def _fill_first(scope, selectors, value) -> bool:
     """Fill the first visible, editable control matching any selector. Returns
-    True if something was filled. Never raises - a missing field just returns False."""
+    True if something was filled. Never raises - a missing field just returns False.
+ 
+    Iterates EVERY match of each selector, not just `.first`: a hidden or disabled
+    field that matches an early selector must not shadow a visible one matching the
+    same selector (taking only `.first` and finding it hidden would skip straight to
+    the next selector and miss the real field). `scope` may be a page/frame or a
+    single <form> locator."""
     if not value:
         return False
     for sel in selectors:
         try:
-            loc = page.locator(sel).first
-            if loc.count() > 0 and loc.is_visible() and loc.is_editable():
-                loc.fill(str(value), timeout=3000)
-                return True
+            loc = scope.locator(sel)
+            n = loc.count()
         except Exception:
             continue
+        for i in range(n):
+            try:
+                el = loc.nth(i)
+                if el.is_visible() and el.is_editable():
+                    el.fill(str(value), timeout=3000)
+                    return True
+            except Exception:
+                continue
     return False
  
  
-def _required_controls_all_satisfied(page) -> bool:
+def _required_controls_all_satisfied(scope) -> bool:
     """True only if every REQUIRED form control has a value / a file. This is the
     core anti-garbage guard: if we couldn't map some required field, we must not
-    submit. Fails safe to False (do not submit) on any uncertainty."""
+    submit. Fails safe to False (do not submit) on any uncertainty. `scope` is the
+    application form (or the whole context) - scoping it to the real form keeps a
+    required field in an unrelated form (a newsletter's email) from blocking."""
     try:
-        controls = page.locator(
+        controls = scope.locator(
             "input[required]:not([type=hidden]):not([type=submit]):not([type=button]), "
             "textarea[required], select[required], "
             "[aria-required='true']"
@@ -240,6 +254,42 @@ def _resolve_form_context(page, timeout_ms: int):
     return page
  
  
+def _resolve_application_form(ctx):
+    """Within the form context, pick the <form> that looks like the job application
+    - scored by a résumé file input, a name field, an email/phone field, and an
+    'apply'/'application' submit - so a newsletter/search form on the same page
+    can't capture our fills, satisfy the required-field check, or be the submit
+    target. Returns a Locator for that form, or None to fall back to the whole
+    context (many ATSes don't wrap their fields in a <form> at all). Mirrors the
+    browser extension's applicationForm() so both delivery paths behave the same."""
+    try:
+        forms = ctx.locator("form")
+        n = forms.count()
+    except Exception:
+        return None
+    best, best_score = None, 1  # require a minimal signal (> 1) to claim a form
+    for i in range(n):
+        f = forms.nth(i)
+        s = 0
+        try:
+            if f.locator("input[type=file]").count() > 0:
+                s += 3
+            if f.locator("input[name*=first i], input[name*='full_name' i], input[name*='full-name' i], input[name*=fullname i], input[name='name'], input[autocomplete='name'], input[autocomplete='given-name']").count() > 0:
+                s += 2
+            if f.locator("input[type=email], input[name*=email i], input[autocomplete='email']").count() > 0:
+                s += 1
+            if f.locator("input[type=tel], input[name*=phone i]").count() > 0:
+                s += 1
+            if f.locator("button:has-text('appl'), input[type=submit][value*='appl' i]").count() > 0:
+                s += 2  # "apply" / "application"
+        except Exception:
+            continue
+        if s > best_score:
+            best_score = s
+            best = f
+    return best
+ 
+ 
 def submit_application_via_browser(
     apply_url: str,
     candidate: dict,
@@ -301,17 +351,23 @@ def submit_application_via_browser(
                 if any(m in body_lower for m in _LOGIN_MARKERS) or has_password:
                     return {"status": "needs_manual", "reason": "the posting requires signing in or creating an account first"}
  
+                # Operate within the actual application form when one is identifiable,
+                # so on a page with several forms (a newsletter signup, a site search)
+                # we never fill a decoy's field, let a decoy's required field block us,
+                # or submit the wrong form. Falls back to the whole context otherwise.
+                scope = _resolve_application_form(ctx) or ctx
+ 
                 # 2) Fill only what we can confidently map to real user data. Selectors
                 #    cover generic markup plus the real field-name conventions of the
                 #    major ATSes (Greenhouse's job_application[...] brackets, Lever's
                 #    bare name/email/phone/resume, Ashby/Workable label-driven fields).
-                _fill_first(ctx, [
+                _fill_first(scope, [
                     "input[type=email]", "input[name*=email i]", "input[id*=email i]",
                     "input[placeholder*=email i]", "input[aria-label*=email i]",
                     "input[name='job_application[email]']", "input[autocomplete='email']",
                 ], candidate.get("email"))
                 full_name = candidate.get("full_name") or " ".join(x for x in [candidate.get("first_name"), candidate.get("last_name")] if x).strip()
-                filled_full = _fill_first(ctx, [
+                filled_full = _fill_first(scope, [
                     "input[name*='full_name' i]", "input[name*='full-name' i]", "input[name*='full name' i]", "input[name*=fullname i]",
                     "input[id*='full_name' i]", "input[id*=fullname i]",
                     "input[placeholder*='full name' i]", "input[aria-label*='full name' i]",
@@ -319,20 +375,20 @@ def submit_application_via_browser(
                     "input[name='name']", "input[id='name']", "input[name*='your_name' i]", "input[name*=applicant i]",
                 ], full_name)
                 if not filled_full:
-                    _fill_first(ctx, [
+                    _fill_first(scope, [
                         "input[name='job_application[first_name]']", "input[autocomplete='given-name']",
                         "input[name*=first i]", "input[id*=first i]", "input[placeholder*='first name' i]", "input[aria-label*='first name' i]",
                     ], candidate.get("first_name"))
-                    _fill_first(ctx, [
+                    _fill_first(scope, [
                         "input[name='job_application[last_name]']", "input[autocomplete='family-name']",
                         "input[name*=last i]", "input[id*=last i]", "input[placeholder*='last name' i]", "input[aria-label*='last name' i]",
                     ], candidate.get("last_name"))
-                _fill_first(ctx, [
+                _fill_first(scope, [
                     "input[type=tel]", "input[name='job_application[phone]']", "input[autocomplete='tel']",
                     "input[name*=phone i]", "input[id*=phone i]", "input[placeholder*=phone i]", "input[aria-label*=phone i]",
                 ], candidate.get("phone"))
                 if cover_letter:
-                    _fill_first(ctx, [
+                    _fill_first(scope, [
                         "textarea[name*=cover i]", "textarea[id*=cover i]", "textarea[name*=message i]", "textarea[name*=letter i]",
                         "textarea[placeholder*='cover letter' i]", "textarea[aria-label*='cover letter' i]",
                         "textarea[name='job_application[cover_letter_text]']", "textarea",
@@ -342,7 +398,7 @@ def submit_application_via_browser(
                 #    sets files even on a hidden/custom-styled file input.
                 if resume_path and os.path.exists(resume_path):
                     try:
-                        file_input = ctx.locator("input[type=file]").first
+                        file_input = scope.locator("input[type=file]").first
                         if file_input.count() > 0:
                             # A real browser file-set can transiently hang; a bounded
                             # retry improves the success rate without ever blocking
@@ -360,7 +416,7 @@ def submit_application_via_browser(
  
                 # 4) ANTI-GARBAGE GUARD: only proceed if every required control is
                 #    satisfied. If we couldn't map a required field, hand off.
-                if not _required_controls_all_satisfied(ctx):
+                if not _required_controls_all_satisfied(scope):
                     return {"status": "needs_manual", "reason": "the form has required fields this couldn't fill safely"}
  
                 # Capture pre-submit state so confirmation is judged by what CHANGES
@@ -370,14 +426,14 @@ def submit_application_via_browser(
                 pre_url = page.url or ""
                 pre_text = _confirmation_text_present(page, ctx)
  
-                # 5) Submit (within the form context).
+                # 5) Submit (within the resolved application form).
                 submit = None
                 for sel in ["button[type=submit]", "input[type=submit]",
                             "button:has-text('Submit application')", "button:has-text('Submit Application')",
                             "button:has-text('Submit')", "button:has-text('Apply')",
                             "button:has-text('Send application')", "button:has-text('Send')"]:
                     try:
-                        loc = ctx.locator(sel).first
+                        loc = scope.locator(sel).first
                         if loc.count() > 0 and loc.is_visible():
                             submit = loc
                             break
@@ -403,7 +459,17 @@ def submit_application_via_browser(
                 #    before), never text/URL that was already present.
                 if _looks_confirmed(page, ctx, pre_url=pre_url, pre_text=pre_text):
                     return {"status": "submitted", "reason": "submission confirmed by the posting"}
-                return {"status": "needs_manual", "reason": "submitted the form but couldn't confirm it went through - verify at the posting"}
+                # We DID click submit but couldn't detect a confirmation. This is
+                # materially different from the aborts above (login/CAPTCHA/required
+                # field), where we never submitted: the application may well have
+                # gone through. Flag it so the caller warns the user to verify rather
+                # than silently offering a retry that could double-submit to the
+                # employer.
+                return {
+                    "status": "needs_manual",
+                    "reason": "submitted the form but couldn't confirm it went through - verify at the posting before resubmitting",
+                    "submitted_unconfirmed": True,
+                }
             finally:
                 try:
                     browser.close()
