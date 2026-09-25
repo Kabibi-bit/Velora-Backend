@@ -32,8 +32,11 @@ def search_assistance(payload: AssistanceSearchIn, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="need_description is required")
     if not payload.budget.strip():
         raise HTTPException(status_code=400, detail="budget is required")
-    if payload.user_id:
-        rate_limit_by_tier(db, payload.user_id, "company-research", per_action_limit=100)
+    # Meter against the CALLER'S OWN token subject, always - never the optional body
+    # user_id. Under require_valid_token a body user_id isn't tied to the token, so
+    # metering only `if payload.user_id` let a caller run this paid web-search call
+    # unlimited by omitting the field, or bill it to another user by passing their id.
+    rate_limit_by_tier(db, _auth["sub"], "company-research", per_action_limit=100)
     try:
         result = find_assistance_options(client, payload.need_description, payload.budget, payload.location_context or "")
     except Exception as e:
