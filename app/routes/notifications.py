@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from app.services.auth import require_auth_for_user, verify_token_belongs_to_user
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
  
@@ -132,6 +132,22 @@ def clear_notifications(user_id: str, db: Session = Depends(get_db), _auth: dict
  
 class NotificationPreferencesIn(BaseModel):
     preferences: dict[str, bool]
+ 
+    @field_validator("preferences")
+    @classmethod
+    def _bound_preferences(cls, v: dict) -> dict:
+        # dict[str, bool] bounds the VALUES but not the number of keys or their
+        # length. These are merged into the profile's notification_preferences JSONB
+        # (read on every scan), and only a handful of keys are ever read, so without
+        # a bound a caller could bloat their own row with arbitrarily many/large junk
+        # keys - an unbounded-storage vector. Cap both; real preference keys are few
+        # and short.
+        if len(v) > 20:
+            raise ValueError("too many preference keys")
+        for k in v:
+            if len(str(k)) > 100:
+                raise ValueError("preference key is too long")
+        return v
  
  
 @router.patch("/{user_id}/preferences")
